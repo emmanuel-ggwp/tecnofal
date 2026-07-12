@@ -1,0 +1,35 @@
+table:
+  name: tipos_aviso
+  schema: public
+insert_permissions:
+  - role: user
+    permission:
+      check: {}
+      columns:
+        - id
+        - clave
+        - nombre
+        - origen
+        - created_at
+select_permissions:
+  - role: user
+    permission:
+      columns:
+        - id
+        - clave
+        - nombre
+        - origen
+        - user_id
+        - created_at
+      filter: {}
+update_permissions:
+  - role: user
+    permission:
+      columns:
+        - id
+        - clave
+        - nombre
+        - origen
+        - created_at
+      filter: {}
+      check: {}

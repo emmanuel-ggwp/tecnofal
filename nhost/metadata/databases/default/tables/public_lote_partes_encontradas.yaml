@@ -1,0 +1,54 @@
+table:
+  name: lote_partes_encontradas
+  schema: public
+insert_permissions:
+  - role: user
+    permission:
+      check: 
+        user_id:
+          _eq: X-Hasura-User-Id
+      set:
+        user_id: x-hasura-User-Id
+      columns:
+        - id
+        - lote_id
+        - parte_id
+        - cantidad
+        - valor_nominal_aplicado
+        - en_stock
+select_permissions:
+  - role: user
+    permission:
+      columns:
+        - id
+        - user_id
+        - lote_id
+        - parte_id
+        - cantidad
+        - valor_nominal_aplicado
+        - en_stock
+      filter: 
+        user_id:
+          _eq: X-Hasura-User-Id
+update_permissions:
+  - role: user
+    permission:
+      columns:
+        - id
+        - lote_id
+        - parte_id
+        - cantidad
+        - valor_nominal_aplicado
+        - en_stock
+      filter: 
+        user_id:
+          _eq: X-Hasura-User-Id
+      check: 
+        user_id:
+          _eq: X-Hasura-User-Id
+delete_permissions:
+  - role: user
+    permission:
+      filter: 
+        user_id:
+          _eq: X-Hasura-User-Id

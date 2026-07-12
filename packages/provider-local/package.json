@@ -1,0 +1,13 @@
+{
+  "name": "@tecnofal/provider-local",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": { "typecheck": "tsc -p tsconfig.json --noEmit", "test": "vitest run" },
+  "dependencies": {
+    "@tecnofal/core": "*",
+    "dexie": "^4.0.8"
+  },
+  "devDependencies": { "typescript": "^5.5.4", "vitest": "^2.0.5", "fake-indexeddb": "^6.0.0" }
+}

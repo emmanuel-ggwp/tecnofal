@@ -1,14 +1,9 @@
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import {
-  AJUSTES_SEMILLA, PARAMETROS_DEFAULT, PARTES_REF_SEMILLA, PRECIOS_IDEALES_SEMILLA,
-  type AjustesConfig, type ModeloInfo, type Parametros, type PrecioIdeal,
-} from '@tecnofal/core';
-import type { Catalogo, CompraDatos, ConversionDatos, Cuenta, EstadoVisto, ListingGuardar, Solicitud } from '../lib/mensajes';
-
-// ---------- Cliente Supabase (SOLO en el service worker; sesión en chrome.storage.local) ----------
-// Los content scripts NUNCA hablan con Supabase directo ni ven tokens: piden por sendMessage.
-const URL_SUPABASE = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
+// §22 LOCAL-FIRST: la UI lee/escribe SIEMPRE contra provider-local (IndexedDB).
+// El backend remoto (Nhost/Supabase) es ESPEJO vía la capa de sync — nunca requisito.
+import { ProveedorLocal } from '@tecnofal/provider-local';
+import { evaluarListado } from '../lib/eval';
+import { crearProveedor } from '../proveedor';
+import type { Solicitud, SyncEstado } from '../lib/mensajes';
 
 const almacen = {
   getItem: async (k: string) => ((await chrome.storage.local.get(k))[k] as string | undefined) ?? null,
@@ -16,240 +11,162 @@ const almacen = {
   removeItem: async (k: string) => chrome.storage.local.remove(k),
 };
 
-const supabase: SupabaseClient | null =
-  URL_SUPABASE && ANON_KEY
-    ? createClient(URL_SUPABASE, ANON_KEY, {
-        auth: { storage: almacen, persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
-      })
-    : null;
+const local = new ProveedorLocal();
+const { proveedor: remoto, nombre: nombreEspejo } = crearProveedor(almacen);
 
-// ---------- Catálogo (cache 10 min) ----------
-const CATALOGO_FALLBACK: Catalogo = {
-  parametros: PARAMETROS_DEFAULT,
-  precios: PRECIOS_IDEALES_SEMILLA,
-  ajustes: AJUSTES_SEMILLA,
-  modelos: [],
-  partesRef: {
-    'Cargador 65W punta fina': PARTES_REF_SEMILLA.cargador,
-    'Batería (genérica por familia)': PARTES_REF_SEMILLA.bateria,
-    'SSD 256GB': PARTES_REF_SEMILLA.ssd_256,
-    'RAM 8GB DDR4': PARTES_REF_SEMILLA.ram_8,
-  },
-  detalles: [],
-  online: false,
-};
+let ultimoSync: number | null = null;
 
-let cacheCatalogo: { datos: Catalogo; hasta: number } | null = null;
-
-async function cargarCatalogo(): Promise<Catalogo> {
-  if (cacheCatalogo && Date.now() < cacheCatalogo.hasta) return cacheCatalogo.datos;
-  if (!supabase) return CATALOGO_FALLBACK;
+// ---------- Capa de sync (§22): push de pendientes + pull de config; fallo = reintento silencioso ----------
+async function sincronizar(): Promise<void> {
+  if (!remoto) return;
   try {
-    const [params, precios, ajustes, modelos, partes, detalles] = await Promise.all([
-      supabase.from('parametros').select('clave, valor'),
-      supabase.from('precios_ideales').select('cpu_tipo, gen_desde, gen_hasta, precio_base'),
-      supabase.from('ajustes_config').select('clave, delta'),
-      supabase.from('modelos').select('id, marca, modelo, cpu_tipo, ram_soldada, ssd_soldado, regla_compra, motivo_regla'),
-      supabase.from('partes_catalogo').select('nombre, precio_referencia'),
-      supabase.from('detalles_catalogo').select('id, nombre, deduccion_base'),
-    ]);
-    if (params.error || precios.error || ajustes.error || modelos.error || partes.error || detalles.error) {
-      return CATALOGO_FALLBACK; // sin sesión (RLS) o sin conexión → modo degradado
+    const ses = await remoto.getSession();
+    if (!ses.email) return; // sin sesión → seguimos solo-local
+
+    for (const l of await local.listingsSucios()) {
+      try {
+        await remoto.guardarListing(l.datos);
+        await local.marcarListingLimpio(l.ebayItemId);
+      } catch (e) { console.error('[sync] listing', l.ebayItemId, e); /* reintento en el próximo ciclo */ }
     }
-    const p: Record<string, number | null> = {};
-    for (const r of params.data ?? []) p[r.clave] = r.valor;
-    const parametros: Parametros = {
-      impuestoEbay: p['impuesto_ebay'] ?? PARAMETROS_DEFAULT.impuestoEbay,
-      seguroValorDeclarado: p['seguro_valor_declarado'] ?? PARAMETROS_DEFAULT.seguroValorDeclarado,
-      seguroZoom: p['seguro_zoom'] ?? PARAMETROS_DEFAULT.seguroZoom,
-      comisionZinliEstimada: p['comision_zinli_estimada'] ?? PARAMETROS_DEFAULT.comisionZinliEstimada,
-      costoRevision: p['costo_revision'] ?? PARAMETROS_DEFAULT.costoRevision,
-      gananciaMinima: p['ganancia_minima'] ?? PARAMETROS_DEFAULT.gananciaMinima,
-      gananciaDecente: p['ganancia_decente'] ?? PARAMETROS_DEFAULT.gananciaDecente,
-      tarifaBarcoPorPie3: p['tarifa_barco_por_pie3'] ?? null,
-      tarifaAvionZoomPorKg: p['tarifa_avion_zoom_por_kg'] ?? null,
-    };
-    const catalogo: Catalogo = {
-      parametros,
-      precios: (precios.data ?? []).map((r): PrecioIdeal => ({
-        cpuTipo: r.cpu_tipo, genDesde: r.gen_desde, genHasta: r.gen_hasta, precioBase: Number(r.precio_base),
-      })),
-      ajustes: Object.fromEntries((ajustes.data ?? []).map((r) => [r.clave, Number(r.delta)])) as AjustesConfig,
-      modelos: (modelos.data ?? []).map((r): ModeloInfo => ({
-        id: r.id, marca: r.marca, modelo: r.modelo, cpuTipo: r.cpu_tipo,
-        ramSoldada: r.ram_soldada, ssdSoldado: r.ssd_soldado,
-        reglaCompra: r.regla_compra, motivoRegla: r.motivo_regla,
-      })),
-      partesRef: Object.fromEntries(
-        (partes.data ?? []).filter((r) => r.precio_referencia != null).map((r) => [r.nombre, Number(r.precio_referencia)]),
-      ),
-      detalles: (detalles.data ?? []).map((r) => ({ id: r.id, nombre: r.nombre, deduccionBase: Number(r.deduccion_base) })),
-      online: true,
-    };
-    cacheCatalogo = { datos: catalogo, hasta: Date.now() + 10 * 60_000 };
-    return catalogo;
-  } catch {
-    return CATALOGO_FALLBACK;
+    for (const c of await local.comprasPendientes()) {
+      try {
+        const r = await remoto.comprar(c.datos);
+        await local.marcarCompraSincronizada(c.id, r.loteId);
+      } catch (e) { console.error('[sync] compra', c.id, e); /* reintento */ }
+    }
+    // §23: push de tipos y avisos de modelo (globales/compartidos)
+    const tiposS = await local.tiposSucios();
+    const avisosS = await local.avisosSucios();
+    if ((tiposS.length > 0 || avisosS.length > 0) && remoto.publicarAvisos) {
+      try {
+        await remoto.publicarAvisos(
+          tiposS.map((t) => ({ clave: t.clave, nombre: t.nombre })),
+          avisosS.map((a) => {
+            const [marca, ...resto] = a.modeloId.split('|');
+            return { marca, modelo: resto.join('|'), tipoClave: a.tipoClave, severidad: a.severidad, motivo: a.motivo };
+          }),
+        );
+        for (const t of tiposS) await local.marcarTipoLimpio(t.clave);
+        for (const a of avisosS) await local.marcarAvisoLimpio(a.id);
+      } catch { /* reintento */ }
+    }
+    // pull de config: LWW — pero la config editada localmente y los overrides NUNCA se pisan
+    const cat = await remoto.cargarCatalogo();
+    if (cat) await local.aplicarConfigRemota(cat);
+    ultimoSync = Date.now();
+  } catch (e) { console.error('[sync]', e); }
+}
+
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.alarms.create('tecnofal-sync', { periodInMinutes: 5 });
+});
+chrome.alarms.onAlarm.addListener((a) => {
+  if (a.name === 'tecnofal-sync') void sincronizar();
+});
+
+// §23 EFECTO RETROACTIVO: re-evaluar TODOS los listings capturados del modelo/familia
+async function reevaluarPorModelos(nombres: string[]): Promise<number> {
+  const cat = await local.cargarCatalogo();
+  let n = 0;
+  for (const f of await local.todosListings()) {
+    const titulo = f.datos.titulo ?? '';
+    if (!nombres.some((m) => m && titulo.toLowerCase().includes(m.toLowerCase()))) continue;
+    if (f.datos.precioVisto == null) continue;
+    const ev = evaluarListado(titulo, f.datos.precioVisto, 0, cat);
+    await local.guardarListing({
+      ...f.datos,
+      semaforo: ev.resultado.semaforo,
+      specs: ev.specs,
+      precioMaxPuja: ev.resultado.sMax,
+      precioPujaDecente: ev.resultado.sDecente,
+      costoEstimadoTotal: ev.resultado.cadena.total,
+      valorEsperadoTotal: ev.resultado.valorEsperado,
+    });
+    n++;
   }
+  return n;
 }
 
-// ---------- Persistencia de listings ----------
-// user_id NO se maneja aquí: lo estampa el trigger BEFORE INSERT y lo filtra RLS.
-function aFila(l: ListingGuardar) {
-  return {
-    ebay_item_id: l.ebayItemId,
-    url: l.url,
-    titulo: l.titulo,
-    precio_visto: l.precioVisto,
-    fecha_visto: new Date().toISOString(),
-    semaforo: l.semaforo,
-    specs_parseadas: l.specs as unknown as object,
-    precio_max_puja: l.precioMaxPuja,
-    precio_puja_decente: l.precioPujaDecente,
-    evaluacion_manual: l.evaluacionManual as object,
-    estado: l.estado,
-  };
+async function estadoSync(): Promise<SyncEstado> {
+  const pendientes = await local.pendientes();
+  let modo: SyncEstado['modo'] = 'solo_local';
+  if (remoto) {
+    const ses = await remoto.getSession().catch(() => ({ email: null }));
+    if (ses.email) modo = pendientes > 0 ? 'pendientes' : 'sincronizado';
+  }
+  return { modo, pendientes, ultimo: ultimoSync, espejo: remoto ? nombreEspejo : 'ninguno' };
 }
 
-async function guardarListing(l: ListingGuardar) {
-  if (!supabase) throw new Error('Sin conexión con Supabase (configura .env)');
-  const { error } = await supabase.from('listings').upsert(aFila(l), { onConflict: 'user_id,ebay_item_id' });
-  if (error) throw new Error(error.message);
-  return { ok: true };
-}
-
-async function checkListings(ids: string[]): Promise<EstadoVisto[]> {
-  if (!supabase || ids.length === 0) return [];
-  const { data, error } = await supabase
-    .from('listings').select('ebay_item_id, semaforo, estado').in('ebay_item_id', ids);
-  if (error) return []; // sesión expirada → los listings no se marcan
-  return (data ?? []).map((r) => ({ ebayItemId: r.ebay_item_id, semaforo: r.semaforo, estado: r.estado }));
-}
-
-// ---------- Botón "Comprada": lote + laptops + estimado congelado + reparto fijo ----------
-async function comprar(d: CompraDatos) {
-  if (!supabase) throw new Error('Sin conexión con Supabase (configura .env)');
-  const ahora = new Date().toISOString();
-
-  // §13: proyectado SIN colchón Zinli (el colchón es solo de la calculadora)
-  const c = d.cadena;
-  const impuestoEbaySinZinli = c.conZinli !== 0 ? c.base * (c.conEbay / c.conZinli - 1) : 0;
-  const proyectado = (d.listing.precioVisto ?? 0) + d.envioUsa + impuestoEbaySinZinli
-    + c.extras + c.seguro + c.envioVzla + c.revision;
-
-  const { data: lote, error: eLote } = await supabase
-    .from('lotes')
-    .insert({
-      origen: 'ebay',
-      url_ebay: d.listing.url,
-      precio_subasta: d.listing.precioVisto,
-      envio_usa: d.envioUsa,
-      costo_proyectado_total: proyectado,
-    })
-    .select('id').single();
-  if (eLote) throw new Error(eLote.message);
-
-  const laptops = Array.from({ length: d.cantidad }, () => ({
-    lote_id: lote.id,
-    modelo_id: d.modeloId,
-    cpu_tipo: d.cpuTipo,
-    cpu_gen: d.cpuGen,
-    ram_gb: d.ramGb,
-    ssd_gb: d.ssdGb,
-    pantalla_pulgadas: d.pantallaPulgadas,
-    pantalla_tactil: d.pantallaTactil,
-    estado: 'comprada',
-  }));
-  const { data: creadas, error: eLap } = await supabase.from('laptops').insert(laptops).select('id');
-  if (eLap) throw new Error(eLap.message);
-
-  // Estimado congelado al comprar (§2.5) — ámbito lote
-  // §13: SIN línea comision_zinli — el impuesto eBay se congela sobre la base real (sin
-  // el colchón Zinli, que es solo conservadurismo de la calculadora)
-  const linea = (tipo: string, monto: number) => ({
-    ambito: 'lote', ambito_id: lote.id, tipo, monto_estimado: monto, estimado_congelado_at: ahora,
-  });
-  const impuestoEbay = impuestoEbaySinZinli;
-  const lineas = [
-    linea('subasta', d.listing.precioVisto ?? 0),
-    linea('envio_usa', d.envioUsa),
-    linea('impuesto_ebay', impuestoEbay),
-    linea('parte', c.extras),
-    linea('seguro', c.seguro),
-    linea('envio_vzla', c.envioVzla),
-    linea('revision', c.revision),
-  ].filter((l) => l.monto_estimado !== 0);
-  const { error: eLineas } = await supabase.from('costo_lineas').insert(lineas);
-  if (eLineas) throw new Error(eLineas.message);
-
-  // El reparto FIJO del lote NO se crea aquí: se congela al completar la revisión física
-  // (función SQL congelar_reparto_lote, §2.6) — descuenta partes encontradas a valor nominal.
-  void creadas;
-
-  await supabase.from('listings').upsert(
-    { ...aFila({ ...d.listing, estado: 'comprado' }), lote_id: lote.id },
-    { onConflict: 'user_id,ebay_item_id' },
-  );
-  return { ok: true, loteId: lote.id };
-}
-
-// ---------- §13: conversiones entre cuentas (acción rápida global) ----------
-async function listarCuentas(): Promise<Cuenta[]> {
-  if (!supabase) return [];
-  const { data, error } = await supabase.from('cuentas').select('id, nombre, moneda').order('nombre');
-  if (error) throw new Error(error.message);
-  return (data ?? []) as Cuenta[];
-}
-
-async function registrarConversion(d: ConversionDatos) {
-  if (!supabase) throw new Error('Sin conexión con Supabase (configura .env)');
-  const fecha = d.fecha ?? new Date().toISOString().slice(0, 10);
-  const { data: movs, error: eMov } = await supabase.from('movimientos').insert([
-    { cuenta_id: d.cuentaOrigenId, fecha, tipo: 'egreso', monto: d.montoOrigen, concepto: d.nota ?? 'Conversión' },
-    { cuenta_id: d.cuentaDestinoId, fecha, tipo: 'ingreso', monto: d.montoDestino, concepto: d.nota ?? 'Conversión' },
-  ]).select('id');
-  if (eMov) throw new Error(eMov.message);
-  const { error: eConv } = await supabase.from('conversiones').insert({
-    fecha,
-    movimiento_origen_id: movs![0].id,
-    movimiento_destino_id: movs![1].id,
-    monto_origen: d.montoOrigen,
-    monto_destino: d.montoDestino,
-    nota: d.nota ?? null,
-  });
-  if (eConv) throw new Error(eConv.message);
-  return { ok: true, tasaImplicita: d.montoOrigen / d.montoDestino };
-}
-
-// ---------- Auth ----------
-async function authEstado() {
-  if (!supabase) return { configurado: false, email: null };
-  const { data } = await supabase.auth.getSession();
-  return { configurado: true, email: data.session?.user.email ?? null };
-}
-
-// ---------- Router de mensajes ----------
+// ---------- Router: la UI habla con LOCAL; remoto solo para auth/cuentas/conversiones ----------
 async function manejar(msg: Solicitud): Promise<unknown> {
   switch (msg.tipo) {
-    case 'catalogo': return cargarCatalogo();
-    case 'auth:estado': return authEstado();
-    case 'auth:login': {
-      if (!supabase) throw new Error('Configura VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY en .env');
-      const { error } = await supabase.auth.signInWithPassword({ email: msg.email, password: msg.password });
-      if (error) throw new Error(error.message);
-      cacheCatalogo = null;
-      return authEstado();
-    }
-    case 'auth:logout': {
-      await supabase?.auth.signOut();
-      cacheCatalogo = null;
+    case 'catalogo': return local.cargarCatalogo();
+    case 'listings:check': return local.checkListings(msg.ids);
+    case 'listings:obtener': return local.obtenerListing(msg.id);
+    case 'listings:guardar': {
+      await local.guardarListing(msg.listing);
+      void sincronizar();
       return { ok: true };
     }
-    case 'listings:check': return checkListings(msg.ids);
-    case 'listings:guardar': return guardarListing(msg.listing);
-    case 'comprar': return comprar(msg.datos);
-    case 'cuentas:listar': return listarCuentas();
-    case 'conversion:registrar': return registrarConversion(msg.datos);
+    case 'comprar': {
+      const r = await local.comprar(msg.datos);
+      void sincronizar();
+      return { ok: true, loteId: r.loteId };
+    }
+
+    case 'config:leer': return local.leerConfig();
+    case 'config:parametro': {
+      await local.guardarParametro(msg.clave, msg.valor);
+      return { ok: true };
+    }
+    case 'config:seccion': {
+      await local.reemplazarSeccion(msg.seccion, msg.filas);
+      return { ok: true };
+    }
+    case 'config:exportar': return { json: await local.exportarJSON() };
+    case 'config:importar': {
+      await local.importarJSON(msg.json);
+      return { ok: true };
+    }
+
+    case 'detalle:crear': {
+      await local.crearDetalle(msg.detalle);
+      return { ok: true };
+    }
+    case 'modelo:marcar': {
+      await local.marcarModelo(msg.datos);
+      const reevaluados = await reevaluarPorModelos(msg.datos.modelos);
+      void sincronizar();
+      return { ok: true, reevaluados };
+    }
+    case 'sync:estado': return estadoSync();
+    case 'sync:ahora': {
+      await sincronizar();
+      return estadoSync();
+    }
+
+    case 'auth:estado': {
+      if (!remoto) return { configurado: false, email: null };
+      const s = await remoto.getSession();
+      return { configurado: true, email: s.email };
+    }
+    case 'auth:login': {
+      if (!remoto) throw new Error('Sin espejo configurado (.env): la extensión sigue funcionando 100% local');
+      const s = await remoto.signIn(msg.email, msg.password);
+      void sincronizar();
+      return { configurado: true, email: s.email };
+    }
+    case 'auth:logout': {
+      await remoto?.signOut();
+      return { ok: true };
+    }
+    case 'cuentas:listar': return remoto ? remoto.listarCuentas().catch(() => []) : [];
+    case 'conversion:registrar': {
+      if (!remoto) throw new Error('Las conversiones requieren el espejo (Nhost) con sesión');
+      const r = await remoto.registrarConversion(msg.datos);
+      return { ok: true, tasaImplicita: r.tasaImplicita };
+    }
   }
 }
 

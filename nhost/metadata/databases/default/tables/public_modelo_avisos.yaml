@@ -1,0 +1,41 @@
+table:
+  name: modelo_avisos
+  schema: public
+insert_permissions:
+  - role: user
+    permission:
+      check: {}
+      columns:
+        - id
+        - modelo_id
+        - tipo_aviso_id
+        - severidad
+        - motivo
+        - origen
+        - created_at
+select_permissions:
+  - role: user
+    permission:
+      columns:
+        - id
+        - modelo_id
+        - tipo_aviso_id
+        - severidad
+        - motivo
+        - origen
+        - user_id
+        - created_at
+      filter: {}
+update_permissions:
+  - role: user
+    permission:
+      columns:
+        - id
+        - modelo_id
+        - tipo_aviso_id
+        - severidad
+        - motivo
+        - origen
+        - created_at
+      filter: {}
+      check: {}

@@ -1,0 +1,1 @@
+-- no-op: roles y auth.uid() pueden estar en uso por otros objetos

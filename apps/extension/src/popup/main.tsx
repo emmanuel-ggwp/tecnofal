@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { enviar, type Cuenta } from '../lib/mensajes';
+import type { SyncEstado } from '../lib/mensajes';
 
 interface Estado {
   configurado: boolean;
@@ -8,7 +9,6 @@ interface Estado {
   error?: string;
 }
 
-/** §13: acción rápida — registrar conversión/transferencia entre cuentas */
 function Conversion() {
   const [cuentas, setCuentas] = useState<Cuenta[]>([]);
   const [origen, setOrigen] = useState('');
@@ -77,6 +77,30 @@ function Conversion() {
   );
 }
 
+function SyncBar() {
+  const [st, setSt] = useState<SyncEstado | null>(null);
+  const [girando, setGirando] = useState(false);
+  const refrescar = () => void enviar<SyncEstado>({ tipo: 'sync:estado' }).then(setSt);
+  useEffect(refrescar, []);
+  if (!st) return null;
+  const texto = st.modo === 'sincronizado' ? '✓ sincronizado'
+    : st.modo === 'pendientes' ? `⟳ ${st.pendientes} pendiente(s)`
+    : `⚡ solo local${st.pendientes ? ` (${st.pendientes} en cola)` : ''}`;
+  const color = st.modo === 'sincronizado' ? '#16a34a' : st.modo === 'pendientes' ? '#d97706' : '#6b7280';
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, marginBottom: 8 }}>
+      <span style={{ color, fontWeight: 700 }}>{texto}</span>
+      <span style={{ color: '#9ca3af' }}>espejo: {st.espejo}</span>
+      <button
+        disabled={girando}
+        style={{ marginLeft: 'auto' }}
+        onClick={() => { setGirando(true); void enviar<SyncEstado>({ tipo: 'sync:ahora' }).then((r) => { setSt(r); setGirando(false); }); }}
+      >Sync</button>
+      <button onClick={() => chrome.runtime.openOptionsPage()}>⚙ Config</button>
+    </div>
+  );
+}
+
 function Popup() {
   const [estado, setEstado] = useState<Estado | null>(null);
   const [email, setEmail] = useState('');
@@ -107,8 +131,9 @@ function Popup() {
     return (
       <div>
         <h3 style={{ margin: '0 0 8px' }}>TecnoFal</h3>
-        <p>⚠ Falta configurar <code>.env</code> (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY) y recompilar.</p>
-        <p>La extensión funciona en <b>modo degradado</b> con valores semilla: semáforo sí, guardar/comprar no.</p>
+        <SyncBar />
+        <p>⚡ Sin espejo configurado (<code>.env</code>): todo funciona y se guarda <b>localmente</b>.</p>
+        <p>Configura Nhost/Supabase y recompila para activar el respaldo remoto.</p>
       </div>
     );
   }
@@ -116,6 +141,7 @@ function Popup() {
   return (
     <div>
       <h3 style={{ margin: '0 0 8px' }}>TecnoFal</h3>
+      <SyncBar />
       {estado.email ? (
         <>
           <p>Conectado como <b>{estado.email}</b></p>
@@ -124,7 +150,7 @@ function Popup() {
         </>
       ) : (
         <>
-          <p>Inicia sesión (usuario de Supabase Auth):</p>
+          <p>Inicia sesión para activar el espejo remoto (opcional — lo local siempre funciona):</p>
           <input placeholder="email" value={email} onChange={(e) => setEmail(e.target.value)} style={{ width: '100%', marginBottom: 6 }} />
           <input placeholder="contraseña" type="password" value={password} onChange={(e) => setPassword(e.target.value)} style={{ width: '100%', marginBottom: 6 }} />
           <button disabled={ocupado || !email || !password} onClick={() => void login()}>Entrar</button>

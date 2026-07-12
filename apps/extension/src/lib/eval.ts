@@ -13,6 +13,7 @@ export interface Faltante {
   nombre: string;
   precio: number;
   falta: boolean;
+  cantidad: number;
 }
 
 function precioRef(catalogo: Catalogo, patron: RegExp, fallback: number): number {
@@ -23,28 +24,15 @@ function precioRef(catalogo: Catalogo, patron: RegExp, fallback: number): number
 /**
  * Partes faltantes según §5.1: no_mencionado → falta; posible → pesimista (falta).
  */
-export function faltantesDe(specs: SpecsParseadas, catalogo: Catalogo): Faltante[] {
+export function faltantesDe(specs: SpecsParseadas, catalogo: Catalogo, cantidadLote = 1): Faltante[] {
+  const item = (clave: string, nombre: string, precio: number, falta: boolean): Faltante => ({
+    clave, nombre, precio, falta, cantidad: falta ? cantidadLote : 0,
+  });
   return [
-    {
-      clave: 'cargador', nombre: 'Cargador',
-      precio: precioRef(catalogo, /cargador/i, 12),
-      falta: specs.cargadorIncluido.valor !== true,
-    },
-    {
-      clave: 'bateria', nombre: 'Batería',
-      precio: precioRef(catalogo, /bater/i, 25),
-      falta: specs.bateriaIncluida.valor !== true,
-    },
-    {
-      clave: 'ssd', nombre: 'SSD 256GB',
-      precio: precioRef(catalogo, /ssd 256/i, 22),
-      falta: !(specs.ssdGb.confianza === 'confirmado' && (specs.ssdGb.valor ?? 0) > 0),
-    },
-    {
-      clave: 'ram', nombre: 'RAM 8GB',
-      precio: precioRef(catalogo, /ram 8/i, 14),
-      falta: specs.ramGb.valor == null,
-    },
+    item('cargador', 'Cargador', precioRef(catalogo, /cargador/i, 12), specs.cargadorIncluido.valor !== true),
+    item('bateria', 'Batería', precioRef(catalogo, /bater/i, 25), specs.bateriaIncluida.valor !== true),
+    item('ssd', 'SSD 256GB', precioRef(catalogo, /ssd 256/i, 22), !(specs.ssdGb.confianza === 'confirmado' && (specs.ssdGb.valor ?? 0) > 0)),
+    item('ram', 'RAM 8GB', precioRef(catalogo, /ram 8/i, 14), specs.ramGb.valor == null),
   ];
 }
 
@@ -58,6 +46,32 @@ export function specsPesimistas(specs: SpecsParseadas) {
     pantallaPulgadas: specs.pantallaPulgadas.valor,
     pantallaTactil: specs.pantallaTactil.valor === true,
   };
+}
+
+export function deduccionesSugeridas(
+  specs: SpecsParseadas,
+  catalogo: Catalogo,
+): { nombre: string; monto: number; cantidad: number }[] {
+  const FALLBACK: Record<string, number> = { 'Pantalla rota': 30 };
+  const base = specs.detallesSugeridos.map((nombre) => ({
+    nombre,
+    monto: catalogo.detalles.find((d) => d.nombre === nombre)?.deduccionBase ?? FALLBACK[nombre] ?? 15,
+    cantidad: 1,
+  }));
+  // RAM soldada (total/parcial/revisar): añadir deducción automática — ya no bloquea la puja
+  const ramSol = specs.modeloDetectado?.ramSoldada;
+  if (ramSol === 'parcial' || ramSol === 'revisar' || ramSol === 'total') {
+    const det = catalogo.detalles.find((d) => d.nombre === 'RAM soldada');
+    if (det && !base.some((d) => d.nombre === 'RAM soldada'))
+      base.push({ nombre: det.nombre, monto: det.deduccionBase, cantidad: 1 });
+  }
+  // SSD soldado: añadir deducción automática
+  if (specs.modeloDetectado?.ssdSoldado) {
+    const det = catalogo.detalles.find((d) => d.nombre === 'SSD soldado');
+    if (det && !base.some((d) => d.nombre === 'SSD soldado'))
+      base.push({ nombre: det.nombre, monto: det.deduccionBase, cantidad: 1 });
+  }
+  return base;
 }
 
 export interface EvaluacionRapida {
@@ -75,18 +89,19 @@ export function evaluarListado(
   metodo: MetodoEnvio = 'barco',
 ): EvaluacionRapida {
   const specs = parseListing(titulo, catalogo.modelos);
-  const extras = faltantesDe(specs, catalogo)
-    .filter((f) => f.falta)
-    .reduce((s, f) => s + f.precio, 0);
+  const n = specs.cantidadLote && specs.cantidadLote > 1 ? specs.cantidadLote : 1;
+  const extras = faltantesDe(specs, catalogo, n).reduce((s, f) => s + f.precio * f.cantidad, 0);
+  const deducciones = deduccionesSugeridas(specs, catalogo).reduce((s, d) => s + d.monto * d.cantidad, 0);
   const entrada: EntradaEvaluacion = {
     precioSubasta: precio,
     envioUsa,
     extrasPartes: extras,
-    deducciones: 0,
+    deducciones,
     metodo,
+    envioVzlaPorUnidad: catalogo.parametros.envioVzlaPorLaptop,
     volumenPie3: VOLUMEN_LAPTOP_PIE3,
     pesoKg: PESO_LAPTOP_KG,
-    cantidadLaptops: 1,
+    cantidadLaptops: n,
     ...specsPesimistas(specs),
     bloqueado: specs.bloqueos.length > 0,
   };

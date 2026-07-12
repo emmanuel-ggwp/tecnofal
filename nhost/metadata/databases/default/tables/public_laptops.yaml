@@ -1,0 +1,82 @@
+table:
+  name: laptops
+  schema: public
+insert_permissions:
+  - role: user
+    permission:
+      check: 
+        user_id:
+          _eq: X-Hasura-User-Id
+      set:
+        user_id: x-hasura-User-Id
+      columns:
+        - id
+        - modelo_id
+        - lote_id
+        - service_tag
+        - cpu_tipo
+        - cpu_gen
+        - ram_gb
+        - ssd_gb
+        - tiene_hdd
+        - pantalla_pulgadas
+        - pantalla_tactil
+        - estado
+        - paquete_id
+        - es_donante
+        - fotos
+select_permissions:
+  - role: user
+    permission:
+      columns:
+        - id
+        - user_id
+        - modelo_id
+        - lote_id
+        - service_tag
+        - alias
+        - cpu_tipo
+        - cpu_gen
+        - ram_gb
+        - ssd_gb
+        - tiene_hdd
+        - pantalla_pulgadas
+        - pantalla_tactil
+        - estado
+        - paquete_id
+        - es_donante
+        - fotos
+      filter: 
+        user_id:
+          _eq: X-Hasura-User-Id
+update_permissions:
+  - role: user
+    permission:
+      columns:
+        - id
+        - modelo_id
+        - lote_id
+        - service_tag
+        - cpu_tipo
+        - cpu_gen
+        - ram_gb
+        - ssd_gb
+        - tiene_hdd
+        - pantalla_pulgadas
+        - pantalla_tactil
+        - estado
+        - paquete_id
+        - es_donante
+        - fotos
+      filter: 
+        user_id:
+          _eq: X-Hasura-User-Id
+      check: 
+        user_id:
+          _eq: X-Hasura-User-Id
+delete_permissions:
+  - role: user
+    permission:
+      filter: 
+        user_id:
+          _eq: X-Hasura-User-Id

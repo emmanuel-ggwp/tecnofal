@@ -1,0 +1,51 @@
+table:
+  name: lote_reparto
+  schema: public
+insert_permissions:
+  - role: user
+    permission:
+      check: 
+        user_id:
+          _eq: X-Hasura-User-Id
+      set:
+        user_id: x-hasura-User-Id
+      columns:
+        - lote_id
+        - laptop_id
+        - valor_esperado_al_comprar
+        - proporcion
+        - costo_asignado
+select_permissions:
+  - role: user
+    permission:
+      columns:
+        - lote_id
+        - laptop_id
+        - user_id
+        - valor_esperado_al_comprar
+        - proporcion
+        - costo_asignado
+      filter: 
+        user_id:
+          _eq: X-Hasura-User-Id
+update_permissions:
+  - role: user
+    permission:
+      columns:
+        - lote_id
+        - laptop_id
+        - valor_esperado_al_comprar
+        - proporcion
+        - costo_asignado
+      filter: 
+        user_id:
+          _eq: X-Hasura-User-Id
+      check: 
+        user_id:
+          _eq: X-Hasura-User-Id
+delete_permissions:
+  - role: user
+    permission:
+      filter: 
+        user_id:
+          _eq: X-Hasura-User-Id

@@ -3,7 +3,6 @@ import type {
   Parametros, PrecioIdeal, ResultadoEvaluacion, Semaforo,
 } from './types.js';
 
-/** Precio base desde precios_ideales; i7 sin fila propia usa i5 + ajuste i7_sobre_i5 */
 export function precioBasePara(
   cpuTipo: CpuTipo | null,
   cpuGen: number | null,
@@ -20,7 +19,6 @@ export function precioBasePara(
   return null;
 }
 
-/** Ajustes sobre la config base 8GB/256GB/14" (§2.1) */
 export function ajustesPara(
   e: { ramGb: number | null; ssdGb: number | null; pantallaPulgadas: number | null; pantallaTactil: boolean },
   aj: AjustesConfig,
@@ -36,46 +34,53 @@ export function ajustesPara(
   return total;
 }
 
-function envioVzla(metodo: MetodoEnvio, volumenPie3: number, pesoKg: number, p: Parametros): number | null {
-  if (metodo === 'barco') return p.tarifaBarcoPorPie3 == null ? null : volumenPie3 * p.tarifaBarcoPorPie3;
-  return p.tarifaAvionZoomPorKg == null ? null : pesoKg * p.tarifaAvionZoomPorKg;
+/** Ajuste por tamaño de pantalla: base = 14" (13.3 cuenta como 14); ≥15 grande; ≤13 pequeña */
+export function ajustePantalla(pulgadas: number | null, aj: AjustesConfig): number {
+  if (pulgadas == null) return 0;
+  if (pulgadas >= 15) return aj['pantalla_grande'] ?? 0;
+  if (pulgadas <= 13) return aj['pantalla_pequena'] ?? 0;
+  return 0;
 }
 
-/**
- * Cadena de costos estimados en el orden real del flujo (§4.1).
- * §13: comision_zinli_estimada es OPCIONAL y solo aporta conservadurismo al estimado;
- * NUNCA genera línea de costo real (el resultado cambiario vive en `conversiones`).
- * §12: origen 'local' → cadena corta: precio + partes + flete nacional + revisión.
- */
+function envioVzla(metodo: MetodoEnvio, volumenTotal: number, pesoTotal: number, p: Parametros): number | null {
+  if (metodo === 'barco') return p.tarifaBarcoPorPie3 == null ? null : volumenTotal * p.tarifaBarcoPorPie3;
+  return p.tarifaAvionZoomPorKg == null ? null : pesoTotal * p.tarifaAvionZoomPorKg;
+}
+
 export function cadenaCostos(e: EntradaEvaluacion, p: Parametros): { cadena: CadenaCostos; advertencias: string[] } {
   const advertencias: string[] = [];
+  const n = Math.max(e.cantidadLaptops, 1);
+  const extras = e.extrasPartes; // TOTAL del lote
+  const revision = p.costoRevision * n;
+
   if (e.origen === 'local') {
     const base = e.precioSubasta;
     const envio = e.fleteNacional ?? 0;
-    const revision = p.costoRevision * e.cantidadLaptops;
-    const total = base + e.extrasPartes + envio + revision;
+    const total = base + extras + envio + revision;
     return {
-      cadena: { base, conZinli: base, conEbay: base, extras: e.extrasPartes, seguro: 0, envioVzla: envio, revision, total },
+      cadena: { base, conZinli: base, conEbay: base, extras, seguro: 0, envioVzla: envio, revision, total },
       advertencias,
     };
   }
+
   const base = e.precioSubasta + e.envioUsa;
   const conZinli = base * (1 + p.comisionZinliEstimada);
   const conEbay = conZinli * p.impuestoEbay;
   const valorDeclarado = e.valorDeclarado ?? base;
   const tasaSeguro = p.seguroValorDeclarado + (e.metodo === 'avion_zoom' ? p.seguroZoom : 0);
   const seguro = valorDeclarado * tasaSeguro;
-  let envio = envioVzla(e.metodo, e.volumenPie3, e.pesoKg, p);
+  let envio = e.envioVzlaPorUnidad != null
+    ? e.envioVzlaPorUnidad * n
+    : envioVzla(e.metodo, e.volumenPie3 * n, e.pesoKg * n, p);
   if (envio == null) {
     advertencias.push(e.metodo === 'barco'
       ? 'tarifa_barco_por_pie3 sin valor: cargar en Configuración/Studio (envío Vzla = 0 en el cálculo)'
       : 'tarifa_avion_zoom_por_kg sin valor: cargar en Configuración/Studio (envío Vzla = 0 en el cálculo)');
     envio = 0;
   }
-  const revision = p.costoRevision * e.cantidadLaptops;
-  const total = conEbay + e.extrasPartes + seguro + envio + revision;
+  const total = conEbay + extras + seguro + envio + revision;
   return {
-    cadena: { base, conZinli, conEbay, extras: e.extrasPartes, seguro, envioVzla: envio, revision, total },
+    cadena: { base, conZinli, conEbay, extras, seguro, envioVzla: envio, revision, total },
     advertencias,
   };
 }
@@ -88,46 +93,84 @@ export function semaforoDe(margen: number | null, p: Parametros, bloqueado: bool
   return 'rojo';
 }
 
-/**
- * S(m): tope de subasta para margen objetivo m (§4.2). Lineal en S;
- * el seguro se recalcula sobre el valor declarado (una iteración).
- */
-export function precioPuja(m: number, e: EntradaEvaluacion, p: Parametros, valorEsperado: number): number | null {
+export function precioPuja(m: number, e: EntradaEvaluacion, p: Parametros, valorEsperadoTotal: number): number | null {
+  const n = Math.max(e.cantidadLaptops, 1);
+  const extras = e.extrasPartes; // TOTAL del lote
+  const revision = p.costoRevision * n;
+
   if (e.origen === 'local') {
-    const revision = p.costoRevision * e.cantidadLaptops;
-    const s = valorEsperado / (1 + m) - e.extrasPartes - (e.fleteNacional ?? 0) - revision;
-    return Number.isFinite(s) ? Math.max(Math.floor(s * 100) / 100, 0) : null;
+    const s = valorEsperadoTotal / (1 + m) - extras - (e.fleteNacional ?? 0) - revision;
+    return Number.isFinite(s) ? Math.floor(s * 100) / 100 : null;
   }
+
   const factor = (1 + p.comisionZinliEstimada) * p.impuestoEbay;
   const tasaSeguro = p.seguroValorDeclarado + (e.metodo === 'avion_zoom' ? p.seguroZoom : 0);
-  const envio = envioVzla(e.metodo, e.volumenPie3, e.pesoKg, p) ?? 0;
-  const revision = p.costoRevision * e.cantidadLaptops;
+  const envio = e.envioVzlaPorUnidad != null
+    ? e.envioVzlaPorUnidad * n
+    : envioVzla(e.metodo, e.volumenPie3 * n, e.pesoKg * n, p) ?? 0;
 
   const resolver = (seguro: number) =>
-    (valorEsperado / (1 + m) - e.extrasPartes - seguro - envio - revision) / factor - e.envioUsa;
+    (valorEsperadoTotal / (1 + m) - extras - seguro - envio - revision) / factor - e.envioUsa;
 
   let s = resolver((e.precioSubasta + e.envioUsa) * tasaSeguro);
-  s = resolver(Math.max(s + e.envioUsa, 0) * tasaSeguro); // iterar una vez
-  return Number.isFinite(s) ? Math.max(Math.floor(s * 100) / 100, 0) : null;
+  s = resolver(Math.max(s + e.envioUsa, 0) * tasaSeguro);
+  return Number.isFinite(s) ? Math.floor(s * 100) / 100 : null;
 }
 
-/** Evaluación completa: valor esperado, cadena, margen, semáforo, S_decente y S_max */
 export function evaluar(
   e: EntradaEvaluacion,
   p: Parametros,
   precios: PrecioIdeal[],
   ajustes: AjustesConfig,
 ): ResultadoEvaluacion {
+  const n = Math.max(e.cantidadLaptops, 1);
   const precioBase = precioBasePara(e.cpuTipo, e.cpuGen, precios, ajustes);
   const ajustesTotal = ajustesPara(e, ajustes);
-  const valorEsperado = precioBase == null ? null : precioBase + ajustesTotal - e.deducciones;
+  let valorEsperado: number | null;
+  if (precioBase == null) {
+    valorEsperado = null;
+  } else if (e.pantallas && e.pantallas.length > 0) {
+    // LOTE MIXTO: Σ por tamaño; unidades sin asignar → 14" (base)
+    const sinPantalla = ajustesPara({ ...e, pantallaPulgadas: null }, ajustes);
+    const asignadas = e.pantallas.reduce((s, b) => s + b.cantidad, 0);
+    const resto = Math.max(n - asignadas, 0);
+    valorEsperado =
+      e.pantallas.reduce((s, b) => s + b.cantidad * (precioBase + sinPantalla + ajustePantalla(b.pulgadas, ajustes)), 0)
+      + resto * (precioBase + sinPantalla)
+      - e.deducciones;
+  } else {
+    valorEsperado = (precioBase + ajustesTotal) * n - e.deducciones;
+  }
+  const valorEsperadoUnidad = valorEsperado == null ? null : valorEsperado / n;
   const { cadena, advertencias } = cadenaCostos(e, p);
 
   const margen = valorEsperado == null || cadena.total <= 0 ? null : (valorEsperado - cadena.total) / cadena.total;
   const semaforo = semaforoDe(margen, p, e.bloqueado);
-  const sDecente = valorEsperado == null ? null : precioPuja(p.gananciaDecente, e, p, valorEsperado);
-  const sMax = valorEsperado == null ? null : precioPuja(p.gananciaMinima, e, p, valorEsperado);
+
+  let sDecente: number | null = null;
+  let sMax: number | null = null;
+  let sinPujaMotivo: string | null = null;
+
+  if (e.bloqueado) {
+    sinPujaMotivo = 'Bloqueada: no pujar';
+  } else if (valorEsperado != null) {
+    sMax = precioPuja(p.gananciaMinima, e, p, valorEsperado);
+    sDecente = precioPuja(p.gananciaDecente, e, p, valorEsperado);
+    if (sMax != null && sMax <= 0) {
+      sMax = null;
+      sDecente = null;
+      sinPujaMotivo = 'Sin margen ni gratis: partes + envío + revisión superan el valor esperado';
+    } else if (sDecente != null && sDecente <= 0) {
+      sDecente = null;
+      advertencias.push('Margen decente inalcanzable incluso a subasta $0 — solo alcanza el mínimo');
+    }
+  }
   if (precioBase == null) advertencias.push('Sin precio ideal para esta CPU/generación: corrige specs o agrega fila en precios_ideales');
 
-  return { cadena, precioBase, ajustes: ajustesTotal, valorEsperado, margen, semaforo, sDecente, sMax, advertencias };
+  return {
+    cadena, precioBase, ajustes: ajustesTotal,
+    valorEsperado, valorEsperadoUnidad,
+    costoPorUnidad: cadena.total / n,
+    margen, semaforo, sDecente, sMax, sinPujaMotivo, advertencias,
+  };
 }

@@ -88,7 +88,7 @@ begin
     (p_user, 'impuesto_ebay', 1.07, 'Multiplicador de impuesto eBay (semilla 1.07)'),
     (p_user, 'seguro_valor_declarado', 0.05, 'Seguro sobre valor declarado (siempre)'),
     (p_user, 'seguro_zoom', 0.01, 'Recargo adicional Zoom (+1% si aplica)'),
-    (p_user, 'comision_zinli_estimada', 0.05, '§13: OPCIONAL — solo para ser conservador al calcular S_max/S_decente. NO genera línea de costo: el resultado cambiario real vive en conversiones.'),
+    (p_user, 'comision_zinli_estimada', 0, '§19f: default 0 (alineado con el Excel). OPCIONAL — subir solo para colchón conservador en S_max/S_decente; NO genera línea de costo (§13).'),
     (p_user, 'costo_revision', 5, 'Revisión estimada por laptop (el real puede ser 0)'),
     (p_user, 'ganancia_minima', 0.50, 'Margen mínimo (semáforo amarillo)'),
     (p_user, 'ganancia_decente', 0.70, 'Margen decente (semáforo verde)'),

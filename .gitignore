@@ -5,3 +5,9 @@ dist/
 test-results/
 playwright-report/
 .supabase/
+.nhost/
+.secrets
+.sync_tmp/
+supabase/.temp/
+supabase/.branches/
+.next/

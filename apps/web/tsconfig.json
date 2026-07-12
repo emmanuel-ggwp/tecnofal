@@ -1,0 +1,37 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "incremental": true,
+    "plugins": [{ "name": "next" }],
+    // "react"/"react-dom" están fijados a nuestro propio @types/react (19.x) porque en
+    // este monorepo (bun workspaces) `apps/extension` usa React 18, y bun coloca AMBAS
+    // versiones de @types/react en su store interno (node_modules/.bun/node_modules/@types)
+    // sin preferencia de ninguna. El paquete `next`, al vivir físicamente dentro de ese
+    // store (no copiado a apps/web/node_modules), resuelve sus propios `import ... from
+    // 'react'" ambientales (en sus .d.ts) subiendo por esa ruta física y aterriza en la
+    // versión "equivocada" (18.3.31) ANTES de llegar a la carpeta de apps/web — mezclando
+    // los namespaces JSX globales de ambas versiones y rompiendo `<Suspense>` con
+    // "Suspense cannot be used as a JSX component". Este `paths` fuerza a TypeScript a
+    // resolver "react"/"react-dom" contra nuestra copia anidada (19.x) sin importar desde
+    // qué archivo (propio o de una dependencia) se resuelva. No afecta a apps/extension:
+    // es un ajuste local a este tsconfig.
+    "paths": {
+      "@/*": ["./src/*"],
+      "react": ["./node_modules/@types/react"],
+      "react-dom": ["./node_modules/@types/react-dom"]
+    }
+  },
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+  "exclude": ["node_modules"]
+}

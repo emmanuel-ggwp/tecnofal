@@ -2,21 +2,34 @@ import type { Confianza, CpuTipo, ModeloInfo, Spec, SpecsParseadas } from './typ
 
 const spec = <T>(valor: T | null, confianza: Confianza): Spec<T> => ({ valor, confianza });
 
-/** Normaliza para comparar modelos: minúsculas, sin separadores */
 const norm = (s: string) => s.toLowerCase().replace(/[\s\-_/]+/g, ' ').trim();
 
-/**
- * Parser con niveles de confianza (§5.1).
- * - confirmado: se usa tal cual
- * - posible: escenario PESIMISTA (se asume lo peor hasta confirmar)
- * - no_mencionado: se asume que FALTA y se suma su costo estimado
- */
-export function parseListing(texto: string, modelos: ModeloInfo[] = []): SpecsParseadas {
+/** Peor primero: bloqueada > RAM soldada total > condicional > revisar/parcial > normal; empate → gen más vieja */
+const rangoPeor = (m: ModeloInfo): number =>
+  m.reglaCompra === 'bloqueada' ? 0
+  : m.ramSoldada === 'total' ? 1
+  : m.reglaCompra === 'condicional' ? 2
+  : m.ramSoldada === 'revisar' || m.ramSoldada === 'parcial' ? 3
+  : 4;
+
+export function parseListing(
+  texto: string,
+  modelos: ModeloInfo[] = [],
+  textoDanos?: string,
+  modeloForzado?: ModeloInfo | null,
+): SpecsParseadas {
   const t = texto;
+  const td = textoDanos ?? texto;
   const alertas: string[] = [];
   const bloqueos: string[] = [];
 
-  // ---- CPU tipo + generación ----
+  let cantidadLote: number | null = null;
+  const lote = t.match(/\blote?\s*(?:of|de)?\s*\(?(\d{1,2})\)?\b/i) ?? t.match(/\b(\d{1,2})\s*(?:x\b|units?\b|pcs\b|laptops\b)/i);
+  if (lote) {
+    const n = parseInt(lote[1], 10);
+    if (n >= 2 && n <= 30) cantidadLote = n;
+  }
+
   let cpuTipo = spec<CpuTipo>(null, 'no_mencionado');
   let cpuGen = spec<number>(null, 'no_mencionado');
 
@@ -39,7 +52,6 @@ export function parseListing(texto: string, modelos: ModeloInfo[] = []): SpecsPa
     if (genTxt) cpuGen = spec(parseInt(genTxt[1], 10), 'confirmado');
   }
 
-  // ---- Almacenamiento ----
   let ssdGb = spec<number>(null, 'no_mencionado');
   let esHdd = spec<boolean>(null, 'no_mencionado');
   const ssdM = t.match(/(\d+(?:\.\d+)?)\s*(GB|TB)\s*(?:SSD|NVMe|M\.2|PCIe|Solid)/i);
@@ -49,20 +61,18 @@ export function parseListing(texto: string, modelos: ModeloInfo[] = []): SpecsPa
     esHdd = spec(false, 'confirmado');
   }
   if (/(\d+)\s*(?:GB|TB)\s*HDD|\bHDD\b|hard\s*drive/i.test(t) && ssdGb.valor === null) {
-    esHdd = spec(true, 'confirmado'); // pesimista: falta SSD
+    esHdd = spec(true, 'confirmado');
   }
   if (/\bno\s+(?:ssd|hdd|hard\s*drive|storage|hard\s*disk)\b/i.test(t)) {
-    ssdGb = spec<number>(null, 'confirmado'); // confirmado que falta
+    ssdGb = spec<number>(null, 'confirmado');
     esHdd = spec(false, 'confirmado');
   }
 
-  // ---- RAM ----
   let ramGb = spec<number>(null, 'no_mencionado');
   const ramM = t.match(/(\d{1,3})\s*GB\s*(?:DDR[2345][A-Za-z0-9]*|RAM|memory)/i);
   if (ramM) ramGb = spec(parseInt(ramM[1], 10), 'confirmado');
   if (/\bno\s+(?:ram|memory)\b/i.test(t)) ramGb = spec<number>(null, 'confirmado');
 
-  // ---- "N GB" sueltos → posible (pesimista) ----
   if (ramGb.valor === null || ssdGb.valor === null) {
     const sueltos = [...t.matchAll(/\b(\d{1,4})\s*GB\b/gi)]
       .map((m) => parseInt(m[1], 10))
@@ -70,14 +80,10 @@ export function parseListing(texto: string, modelos: ModeloInfo[] = []): SpecsPa
       .filter((n) => (ssdM ? n !== ssdGb.valor : true));
     for (const n of sueltos) {
       if (n <= 64 && ramGb.confianza === 'no_mencionado') ramGb = spec(n, 'posible');
-      else if (n >= 128 && ssdGb.confianza === 'no_mencionado') {
-        // "512" sin la palabra SSD: podría ser HDD → pesimista: se asume que falta SSD
-        ssdGb = spec(n, 'posible');
-      }
+      else if (n >= 128 && ssdGb.confianza === 'no_mencionado') ssdGb = spec(n, 'posible');
     }
   }
 
-  // ---- Pantalla ----
   let pantallaPulgadas = spec<number>(null, 'no_mencionado');
   const pulg = t.match(/\b(1[0-7](?:\.\d)?)\s*(?:"|”|''|-?\s*inch|in\b)/i);
   if (pulg) pantallaPulgadas = spec(parseFloat(pulg[1]), 'confirmado');
@@ -85,53 +91,112 @@ export function parseListing(texto: string, modelos: ModeloInfo[] = []): SpecsPa
   if (/non[- ]?touch|no\s+touch/i.test(t)) pantallaTactil = spec(false, 'confirmado');
   else if (/touch\s*(?:screen)?/i.test(t)) pantallaTactil = spec(true, 'confirmado');
 
-  // ---- Cargador / batería / OS ----
-  let cargadorIncluido = spec<boolean>(null, 'no_mencionado'); // no dice nada → se asume que FALTA
-  if (/no\s+(?:charger|adapter|ac\s*adapter|power\s*(?:cord|supply|adapter))/i.test(t)) cargadorIncluido = spec(false, 'confirmado');
+  let cargadorIncluido = spec<boolean>(null, 'no_mencionado');
+  if (/no\s+(?:charger|adapter|ac\s*adapter|power\s*(?:cord|supply|adapter|brick)|ac\s+cord)/i.test(t)) cargadorIncluido = spec(false, 'confirmado');
   else if (/(?:charger|adapter)\s+(?:included|incl)/i.test(t) || /with\s+charger/i.test(t)) cargadorIncluido = spec(true, 'confirmado');
 
   let bateriaIncluida = spec<boolean>(null, 'no_mencionado');
-  if (/no\s+battery|battery\s+(?:not\s+included|missing|removed|dead|bad)/i.test(t)) bateriaIncluida = spec(false, 'confirmado');
+  if (/no\s+batt(?:ery)?\b|battery\s+(?:not\s+included|missing|removed|dead|bad)/i.test(t)) bateriaIncluida = spec(false, 'confirmado');
   else if (/battery\s+(?:included|good|great|holds|tested|health)/i.test(t)) bateriaIncluida = spec(true, 'confirmado');
 
   const sinOs = /no\s+(?:os|operating\s*system|windows)\b/i.test(t);
 
-  // ---- Bloqueos por texto (§4.5) ----
-  if (/for\s*parts|parts\s*only|not\s*working|no\s*power|does\s*n[o']t\s*(?:power|turn|boot)|won'?t\s*(?:power|turn|boot)/i.test(t))
-    bloqueos.push('"No enciende / for parts" — bloqueada (salvo marcado manual como donante)');
-  if (/\b(celeron|pentium|athlon)\b/i.test(t)) bloqueos.push('CPU Celeron/Pentium/Athlon — bloqueada');
-  if (/chromebook/i.test(t)) bloqueos.push('Chromebook — bloqueada');
-  if (/\bas[- ]is\b/i.test(t)) alertas.push('"As-is": revisar bien la descripción y fotos');
+  // Falla funcional real (siempre bloquea, con o sin "for parts")
+  const fallaFuncional =
+    /\bnot\s+working\b|\bnon[- ]?functional\b|\bnot\s+functional\b|\bdoa\b|\bno\s+power\b(?!\s*(?:cord|adapter|supply|cable|brick))|won'?t\s+(?:turn\s+on|power|boot)|does\s*n[o']?t\s+(?:turn\s+on|power|boot)/i.test(t)
+    // locale español (títulos/condición de eBay LATAM)
+    || /\bno\s+(?:enciende|funciona|prende)\b/i.test(t);
+  // "For parts"/"as-is": solo es un disclaimer — NO bloquea por sí solo, solo si viene con falla funcional
+  const paraRepuestos =
+    /\bfor\s*parts\b|\bparts\s*only\b|\bas[- ]is\b/i.test(t)
+    || /(?:para|solo|sólo)\s+(?:repuestos?|piezas?|partes?)\b|tal\s+como\s+est[aá]/i.test(t);
+  if (fallaFuncional) {
+    bloqueos.push('"No enciende / not working"');
+  } else if (paraRepuestos) {
+    alertas.push('⚠ "For parts / as-is": confirmar que enciende antes de pujar');
+  }
+  if (/\buntested\b/i.test(t)) alertas.push('⚠ "Untested": revisar/preguntar al vendedor antes de pujar');
+  if (/\b(celeron|pentium|athlon)\b/i.test(t)) bloqueos.push('CPU Celeron/Pentium/Athlon');
+  if (/chromebook/i.test(t)) bloqueos.push('Chromebook');
   if (/1366\s*x\s*768|\bTN\s+panel\b/i.test(t)) alertas.push('Pantalla 1366×768 TN — condicional (decide el precio)');
 
-  // ---- Detección de modelo contra la tabla `modelos` ----
+  const MAPA_DETALLES: [RegExp, string][] = [
+    [/crack(?:ed)?\s*(?:screen|lcd|display)|screen\s*crack|broken\s*(?:screen|lcd|display)/i, 'Pantalla rota'],
+    [/lines?\s+on\s+(?:the\s+)?(?:screen|lcd|display)/i, 'Pantalla con líneas'],
+    [/spots?\s+on\s+(?:the\s+)?(?:screen|lcd)|pressure\s*marks?|dead\s*pixels?/i, 'Pantalla con manchas'],
+    [/scratch(?:es|ed)?|scuffs?|dents?|dings?|heavy\s+wear|\bchips\b/i, 'Carcasa marcada'],
+    [/broken\s+hinge|hinge\s+(?:broken|loose|damaged?)|loose\s+hinge/i, 'Bisagra floja'],
+    [/missing\s+keys?|keys?\s+missing/i, 'Tecla(s) faltante(s)'],
+    [/speakers?\s+(?:not\s+working|blown|bad|crackl)/i, 'Corneta dañada'],
+  ];
+  const detallesSugeridos = MAPA_DETALLES.filter(([re]) => re.test(td)).map(([, nombre]) => nombre);
+
   const tn = norm(t.replace(/2[- ]?in[- ]?1/gi, '2-in-1'));
   const candidatos = modelos
     .filter((m) => tn.includes(norm(m.modelo.replace(/2[- ]?in[- ]?1/gi, '2-in-1'))))
     .sort((a, b) => b.modelo.length - a.modelo.length);
-  const modeloDetectado = candidatos[0] ?? null;
+  let modeloDetectado = modeloForzado ?? candidatos[0] ?? null;
+
+  // Fallback por número: el título trae la marca y el número del modelo pero no el nombre completo
+  // (ej. "Dell XPS 9360"). Si hay varios candidatos con ese número, se asume el PEOR.
+  if (!modeloDetectado) {
+    const porNumero = modelos.filter((m) => {
+      const num = m.modelo.match(/(\d{3,4})/)?.[1];
+      return !!num && tn.includes(norm(m.marca)) && new RegExp(`\\b${num}\\b`).test(tn);
+    });
+    if (porNumero.length > 0) {
+      porNumero.sort((a, b) => rangoPeor(a) - rangoPeor(b) || (a.cpuGen ?? 99) - (b.cpuGen ?? 99));
+      modeloDetectado = porNumero[0];
+      alertas.push(
+        porNumero.length > 1
+          ? `⚠ Modelo asumido por número (peor de ${porNumero.length} candidatos): ${modeloDetectado.marca} ${modeloDetectado.modelo} — confirmar`
+          : `⚠ Modelo asumido por número: ${modeloDetectado.marca} ${modeloDetectado.modelo} — confirmar`,
+      );
+    }
+  }
 
   if (modeloDetectado) {
+    // CPU asumida por modelo cuando el título no la trae (peor caso: rangos mixtos → i5)
+    if (cpuTipo.valor === null && modeloDetectado.cpuTipo) {
+      cpuTipo = spec(modeloDetectado.cpuTipo, 'posible');
+      alertas.push(`⚠ CPU no mencionada — asumida ${modeloDetectado.cpuTipo} por el modelo; CONFIRMAR procesador exacto antes de pujar`);
+    }
+    if (cpuGen.valor === null && modeloDetectado.cpuGen != null) {
+      cpuGen = spec(modeloDetectado.cpuGen, 'posible');
+    }
     if (modeloDetectado.reglaCompra === 'bloqueada')
       bloqueos.push(`${modeloDetectado.marca} ${modeloDetectado.modelo}: ${modeloDetectado.motivoRegla ?? 'regla bloqueada'}`);
     if (modeloDetectado.reglaCompra === 'condicional')
       alertas.push(`Condicional: ${modeloDetectado.motivoRegla ?? 'el semáforo decide por precio'}`);
+    // RAM/SSD soldada YA NO bloquean: son advertencia + deducción automática (ver eval.ts)
     if (modeloDetectado.ramSoldada === 'total')
-      bloqueos.push('RAM totalmente soldada — bloqueada');
+      alertas.push('⚠ RAM totalmente soldada — no upgradeable (deducción aplicada automáticamente)');
     if (modeloDetectado.ramSoldada === 'revisar')
       alertas.push('⚠ RAM posiblemente soldada — VERIFICAR service manual o preguntar al vendedor ANTES de pujar');
     if (modeloDetectado.ramSoldada === 'parcial')
       alertas.push('RAM parcial: 1 soldada + 1 slot libre');
     if (modeloDetectado.ssdSoldado)
-      alertas.push('⚠ SSD posiblemente soldado — revisar');
-    if (modeloDetectado.marca.toLowerCase() === 'dell')
-      alertas.push('Dell: preferencia blanda (repuestos fáciles)');
+      alertas.push('⚠ SSD posiblemente soldado — deducción aplicada automáticamente');
+    // §23: avisos creados por el usuario — se saltan los que ya cubre un campo legado (evita duplicados)
+    const tiposLegado = new Set<string>();
+    if (modeloDetectado.ramSoldada === 'total' || modeloDetectado.ramSoldada === 'parcial') tiposLegado.add('ram_soldada');
+    if (modeloDetectado.ramSoldada === 'revisar') tiposLegado.add('revisar');
+    if (modeloDetectado.ssdSoldado) tiposLegado.add('ssd_soldado');
+    if (modeloDetectado.reglaCompra === 'bloqueada') tiposLegado.add('bloqueado');
+    for (const av of modeloDetectado.avisos ?? []) {
+      if (tiposLegado.has(av.tipo)) continue;
+      const txt = av.motivo || av.tipo;
+      if (av.severidad === 'bloquea') bloqueos.push(`${modeloDetectado.marca} ${modeloDetectado.modelo}: ${txt}`);
+      else if (av.severidad === 'condiciona') alertas.push(`Condicional: ${txt}`);
+      else if (av.severidad === 'advierte') alertas.push(`⚠ ${txt}`);
+      else alertas.push(`Nota: ${txt}`);
+    }
   }
   if (cpuTipo.valor === 'i3') alertas.push('i3: condicional — el semáforo decide por precio');
 
   return {
     cpuTipo, cpuGen, ramGb, ssdGb, esHdd,
     pantallaPulgadas, pantallaTactil, cargadorIncluido, bateriaIncluida,
-    sinOs, modeloDetectado, alertas, bloqueos,
+    sinOs, cantidadLote, detallesSugeridos, modeloDetectado, alertas, bloqueos,
   };
 }

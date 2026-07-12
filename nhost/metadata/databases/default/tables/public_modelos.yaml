@@ -1,0 +1,49 @@
+table:
+  name: modelos
+  schema: public
+insert_permissions:
+  - role: user
+    permission:
+      check: {}
+      columns:
+        - id
+        - marca
+        - modelo
+        - cpu_tipo
+        - cpu_gen
+        - ram_soldada
+        - ssd_soldado
+        - regla_compra
+        - motivo_regla
+        - notas
+select_permissions:
+  - role: user
+    permission:
+      columns:
+        - id
+        - marca
+        - modelo
+        - cpu_tipo
+        - cpu_gen
+        - ram_soldada
+        - ssd_soldado
+        - regla_compra
+        - motivo_regla
+        - notas
+      filter: {}
+update_permissions:
+  - role: user
+    permission:
+      columns:
+        - id
+        - marca
+        - modelo
+        - cpu_tipo
+        - cpu_gen
+        - ram_soldada
+        - ssd_soldado
+        - regla_compra
+        - motivo_regla
+        - notas
+      filter: {}
+      check: {}

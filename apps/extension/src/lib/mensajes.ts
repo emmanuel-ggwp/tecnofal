@@ -1,75 +1,19 @@
-import type { AjustesConfig, ModeloInfo, Parametros, PrecioIdeal, Semaforo, SpecsParseadas } from '@tecnofal/core';
+// Tipos de negocio viven en @tecnofal/core (§21); aquí solo el protocolo de mensajes MV3.
+import type { Catalogo, CompraDatos, ConversionDatos, ListingGuardar } from '@tecnofal/core';
+import type { MarcarModeloDatos } from '@tecnofal/provider-local';
 
-export interface DetalleCat {
-  id: string;
-  nombre: string;
-  deduccionBase: number;
-}
+export type { MarcarModeloDatos };
 
-export interface Catalogo {
-  parametros: Parametros;
-  precios: PrecioIdeal[];
-  ajustes: AjustesConfig;
-  modelos: ModeloInfo[];
-  /** nombre de parte → precio_referencia */
-  partesRef: Record<string, number>;
-  detalles: DetalleCat[];
-  /** false = modo degradado con semillas (sin sesión o sin conexión) */
-  online: boolean;
-}
+export type {
+  Catalogo, DetalleCat, ListingGuardar, CompraDatos, EstadoVisto, Cuenta, ConversionDatos,
+} from '@tecnofal/core';
 
-export interface ListingGuardar {
-  ebayItemId: string;
-  url: string;
-  titulo: string;
-  precioVisto: number | null;
-  semaforo: Semaforo | null;
-  specs: SpecsParseadas | null;
-  precioMaxPuja: number | null;
-  precioPujaDecente: number | null;
-  evaluacionManual: unknown;
-  estado: 'visto' | 'evaluado' | 'comprado' | 'descartado';
-}
-
-export interface CompraDatos {
-  listing: ListingGuardar;
-  envioUsa: number;
-  cantidad: number;
-  modeloId: string | null;
-  cpuTipo: string | null;
-  cpuGen: number | null;
-  ramGb: number | null;
-  ssdGb: number | null;
-  pantallaPulgadas: number | null;
-  pantallaTactil: boolean;
-  valorEsperado: number | null;
-  /** cadena estimada congelada al comprar */
-  cadena: {
-    base: number; conZinli: number; conEbay: number;
-    extras: number; seguro: number; envioVzla: number; revision: number; total: number;
-  };
-}
-
-export interface EstadoVisto {
-  ebayItemId: string;
-  semaforo: Semaforo | null;
-  estado: string;
-}
-
-export interface Cuenta {
-  id: string;
-  nombre: string;
-  moneda: string;
-}
-
-/** §13: acción rápida global — registrar conversión entre cuentas */
-export interface ConversionDatos {
-  cuentaOrigenId: string;
-  cuentaDestinoId: string;
-  montoOrigen: number;
-  montoDestino: number;
-  fecha?: string; // default hoy
-  nota?: string;
+/** §22: estado del espejo remoto para el indicador del popup */
+export interface SyncEstado {
+  modo: 'sincronizado' | 'pendientes' | 'solo_local';
+  pendientes: number;
+  ultimo: number | null;
+  espejo: string; // nhost | supabase | ninguno
 }
 
 export type Solicitud =
@@ -80,9 +24,32 @@ export type Solicitud =
   | { tipo: 'auth:login'; email: string; password: string }
   | { tipo: 'auth:logout' }
   | { tipo: 'listings:check'; ids: string[] }
+  | { tipo: 'listings:obtener'; id: string }
   | { tipo: 'listings:guardar'; listing: ListingGuardar }
-  | { tipo: 'comprar'; datos: CompraDatos };
+  | { tipo: 'comprar'; datos: CompraDatos }
+  | { tipo: 'config:leer' }
+  | { tipo: 'config:parametro'; clave: string; valor: number | null }
+  | { tipo: 'config:seccion'; seccion: 'precios' | 'ajustes' | 'detalles' | 'modelos' | 'partesRef'; filas: unknown[] }
+  | { tipo: 'config:exportar' }
+  | { tipo: 'config:importar'; json: string }
+  | { tipo: 'modelo:marcar'; datos: MarcarModeloDatos }
+  | { tipo: 'detalle:crear'; detalle: { categoria: string; nombre: string; deduccionBase: number } }
+  | { tipo: 'sync:estado' }
+  | { tipo: 'sync:ahora' };
 
 export function enviar<T>(msg: Solicitud): Promise<T> {
   return chrome.runtime.sendMessage(msg);
+}
+
+/** Catálogo con reintentos: el service worker MV3 puede estar dormido (frío tras un rato
+ *  sin usar eBay) y fallar o tardar mientras despierta e inicializa IndexedDB. */
+export async function catalogoConReintento(intentos = 4): Promise<Catalogo | null> {
+  for (let i = 0; i < intentos; i++) {
+    try {
+      const c = await enviar<Catalogo>({ tipo: 'catalogo' });
+      if (c && !(c as unknown as { error?: string }).error) return c;
+    } catch { /* SW despertando — reintentar */ }
+    await new Promise((r) => setTimeout(r, 400 * (i + 1)));
+  }
+  return null;
 }

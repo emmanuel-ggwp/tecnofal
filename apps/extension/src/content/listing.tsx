@@ -1,15 +1,37 @@
 // Panel lateral de evaluación en la página del listing (§5.2)
 import { createRoot } from 'react-dom/client';
-import { enviar, type Catalogo } from '../lib/mensajes';
+import { catalogoConReintento, enviar, type Catalogo, type EstadoVisto, type ListingGuardar } from '../lib/mensajes';
+import { esGratis, parsearPrecio } from '../lib/precios';
+import { evaluarListado } from '../lib/eval';
 import { Panel } from './Panel';
 
 function texto(sel: string): string {
   return document.querySelector(sel)?.textContent?.trim() ?? '';
 }
 
-function parsearPrecio(t: string): number | null {
-  const m = t.replace(/,/g, '').match(/\$\s*(\d+(?:\.\d+)?)/);
-  return m ? parseFloat(m[1]) : null;
+/** Costo de envío: eBay cambia de layout seguido — se prueban candidatos hasta que uno tenga precio (o diga gratis). */
+function envioDePagina(): number {
+  const candidatos: string[] = [
+    // fila "Envío:" del layout actual — texto COMPLETO de los valores ("US $15.45 delivery in 2–4 days...")
+    texto('.ux-labels-values--shipping .ux-labels-values__values'),
+    texto('.ux-labels-values--shipping .ux-textspans--BOLD'),
+    texto('#fshippingCost'),
+  ];
+  for (const fila of document.querySelectorAll('[class*="ux-labels-values"]')) {
+    const etiqueta = fila.querySelector('[class*="ux-labels-values__labels"]')?.textContent ?? '';
+    if (!/env[ií]o|shipping/i.test(etiqueta)) continue;
+    candidatos.push(fila.querySelector('[class*="ux-labels-values__values"]')?.textContent ?? '');
+  }
+  const m = document.body.textContent?.match(/(?:US\s*)?\$\s*[\d,]+(?:\.\d+)?\s*(?:delivery|shipping)/i);
+  if (m) candidatos.push(m[0]);
+
+  for (const txt of candidatos) {
+    if (!txt) continue;
+    if (esGratis(txt)) return 0;
+    const precio = parsearPrecio(txt);
+    if (precio != null) return precio;
+  }
+  return 0;
 }
 
 function extraerPagina() {
@@ -22,11 +44,10 @@ function extraerPagina() {
     parsearPrecio(texto('.x-price-primary')) ??
     parsearPrecio(texto('[data-testid="x-price-primary"]')) ??
     parsearPrecio(texto('#prcIsum'));
-  const envioTxt = texto('.ux-labels-values--shipping .ux-textspans--BOLD') || texto('#fshippingCost');
-  const envio = /free/i.test(envioTxt) ? 0 : parsearPrecio(envioTxt) ?? 0;
+  const envio = envioDePagina();
 
   // Item specifics → texto extra para el parser
-  const specifics = [...document.querySelectorAll('.ux-labels-values__labels, .ux-labels-values__values, .ux-layout-section-evo__row')]
+  const specifics = [...document.querySelectorAll('.ux-labels-values__labels, .ux-labels-values__values')]
     .map((e) => e.textContent?.trim())
     .filter(Boolean)
     .join(' · ');
@@ -34,17 +55,68 @@ function extraerPagina() {
   return { itemId, titulo, precio, envio, textoCompleto: `${titulo} · ${specifics}` };
 }
 
-async function main() {
-  const pagina = extraerPagina();
+// §16/§25: abrir el listing lo registra como 'visto' (si no estaba ya guardado),
+// para que en los resultados de búsqueda aparezca atenuado como "ya lo vi".
+async function marcarVisto(pagina: ReturnType<typeof extraerPagina>, catalogo: Catalogo) {
   if (!pagina.itemId || !pagina.titulo) return;
-
-  let catalogo: Catalogo;
   try {
-    catalogo = await enviar<Catalogo>({ tipo: 'catalogo' });
-  } catch {
-    return;
+    const ev = pagina.precio != null ? evaluarListado(pagina.titulo, pagina.precio, pagina.envio, catalogo) : null;
+    const listing: ListingGuardar = {
+      ebayItemId: pagina.itemId,
+      url: location.href.split('?')[0],
+      titulo: pagina.titulo,
+      precioVisto: pagina.precio,
+      semaforo: ev?.resultado.semaforo ?? null,
+      specs: ev?.specs ?? null,
+      precioMaxPuja: ev?.resultado.sMax ?? null,
+      precioPujaDecente: ev?.resultado.sDecente ?? null,
+      cantidadLaptops: ev?.specs.cantidadLote && ev.specs.cantidadLote > 1 ? ev.specs.cantidadLote : 1,
+      costoEstimadoTotal: ev?.resultado.cadena.total ?? null,
+      valorEsperadoTotal: ev?.resultado.valorEsperado ?? null,
+      evaluacionManual: null,
+      estado: 'visto',
+    };
+    await enviar({ tipo: 'listings:guardar', listing });
+  } catch { /* modo degradado: sin registro de vistos */ }
+}
+
+type Pagina = ReturnType<typeof extraerPagina> & { itemId: string; titulo: string };
+
+/** eBay a veces hidrata el título/precio tarde (esqueleto de carga): esperar en vez de rendirse */
+async function esperarPagina(maxMs = 15000): Promise<Pagina | null> {
+  const inicio = Date.now();
+  for (;;) {
+    const p = extraerPagina();
+    if (p.itemId && p.titulo) return p as Pagina;
+    if (!p.itemId) return null; // no es una página /itm/ — no insistir
+    if (Date.now() - inicio > maxMs) return null;
+    await new Promise((r) => setTimeout(r, 500));
   }
-  if (!catalogo || (catalogo as unknown as { error?: string }).error) return;
+}
+
+async function main() {
+  if (document.getElementById('tecnofal-panel-host')) return; // ya montado
+  const pagina = await esperarPagina();
+  if (!pagina) return;
+
+  const catalogo = await catalogoConReintento();
+  if (!catalogo) return;
+
+  // una sola consulta: distingue nuevo / visto / guardado, y evita la carrera con el auto-registro
+  let previo: EstadoVisto | null = null;
+  try {
+    const ya = await enviar<EstadoVisto[]>({ tipo: 'listings:check', ids: [pagina.itemId] });
+    previo = Array.isArray(ya) && ya[0] ? ya[0] : null;
+  } catch { /* modo degradado */ }
+  if (!previo) void marcarVisto(pagina, catalogo);
+
+  // evaluación completa guardada → el panel restaura partes, deducciones, specs corregidas, etc.
+  let guardado: ListingGuardar | null = null;
+  if (previo) {
+    try {
+      guardado = await enviar<ListingGuardar | null>({ tipo: 'listings:obtener', id: pagina.itemId });
+    } catch { /* sin restauración */ }
+  }
 
   const host = document.createElement('div');
   host.id = 'tecnofal-panel-host';
@@ -55,6 +127,7 @@ async function main() {
 
   createRoot(raiz).render(
     <Panel
+      key={pagina.itemId}
       itemId={pagina.itemId}
       url={location.href.split('?')[0]}
       titulo={pagina.titulo}
@@ -62,6 +135,9 @@ async function main() {
       precioInicial={pagina.precio}
       envioInicial={pagina.envio}
       catalogo={catalogo}
+      estadoPrevio={previo?.estado ?? null}
+      motivoDescartePrevio={previo?.motivoDescarte ?? null}
+      guardado={guardado}
     />,
   );
 }

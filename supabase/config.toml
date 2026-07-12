@@ -2,17 +2,17 @@ project_id = "tecnofal"
 
 [api]
 enabled = true
-port = 54321
+port = 55321
 schemas = ["public"]
 max_rows = 1000
 
 [db]
-port = 54322
+port = 55322
 major_version = 15
 
 [studio]
 enabled = true
-port = 54323
+port = 55323
 
 [auth]
 enabled = true
@@ -22,3 +22,10 @@ enable_signup = true
 [auth.email]
 enable_signup = true
 enable_confirmations = false
+
+# Puertos 553xx para convivir con el proyecto "patriona" (que usa los default 543xx).
+[analytics]
+enabled = false
+
+[inbucket]
+port = 55324
