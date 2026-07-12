@@ -1,7 +1,15 @@
-# Nhost — backend activo (§21)
+# Nhost — respaldo/espejo (§21)
 
-- `migrations/default/*/up.sql` — ÚNICA fuente de verdad del esquema (SQL plano
-  portable a Supabase). Prohibido definir esquema desde dashboards.
+**Backend activo real: Supabase** (proyecto "Tecnofal", panel web en Vercel). Este
+directorio es un espejo de respaldo del esquema — no el destino de deploy. Cada
+migración nueva en `supabase/migrations/000X_nombre.sql` se copia aquí en
+`migrations/default/175190000000X_nombre/up.sql` para no perder la opción de migrar
+de proveedor en el futuro, pero **no hay ni debe crearse un proyecto real en
+app.nhost.io** salvo decisión explícita en contrario.
+
+- `migrations/default/*/up.sql` — espejo de `supabase/migrations/*.sql`, mismo
+  contenido, SQL plano portable entre ambos proveedores. Prohibido definir
+  esquema desde dashboards.
 - `metadata/` — permisos Hasura (role `user`: user_id = X-Hasura-User-Id;
   `modelos` global). Regenerable con `node scripts/gen-metadata-hasura.mjs`
   (DATABASE_URL apuntando al postgres local de `nhost up`).
@@ -22,6 +30,7 @@ nhost up     # local (Docker): aplica migraciones + metadata
 Flujo por tabla nueva (§21b): migración SQL en `migrations/default/` → track en
 Hasura → `nhost metadata export` (o regenerar con el script) → commit de ambos.
 
-Deploy (§21c): vincular el repo en app.nhost.io; el push a `main` APLICA las
-migraciones automáticamente. Trabajar en rama `dev` y probar con `nhost up`
-antes de merge.
+Deploy (§21c, hipotético — NO es el flujo actual): si algún día se migra de
+proveedor, se vincularía el repo en app.nhost.io para que el push a `main`
+aplique las migraciones automáticamente. Hoy el deploy real es Supabase + Vercel
+(ver `apps/web/README.md`); este flujo de Nhost no está activo.

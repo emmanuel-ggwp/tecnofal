@@ -18,15 +18,16 @@ tecnofal/
 
 Node 20+, Docker Desktop (para Supabase local) y la CLI de Supabase (`npm i -g supabase`).
 
-## 1. Backend (§21: Nhost hoy, Supabase mañana)
+## 1. Backend (§21: Supabase es el activo/principal; Nhost es respaldo)
 
-**Nhost (activo):** ver `nhost/README.md` — `nhost init` + `nhost up` (Docker) aplica
-`nhost/migrations` + `nhost/metadata`. Deploy: push a la rama `main` vinculada en GitHub
-(declarativo — probar SIEMPRE en local antes de merge). Crea tu usuario en el dashboard
-de Nhost Auth; el trigger siembra su plantilla.
+**Supabase (activo):** `supabase start` (Docker) desde `tecnofal/` aplica
+`supabase/migrations` + RLS ya incluida. Crea tu usuario vía Supabase Auth (Studio o
+`supabase db`); el trigger siembra su plantilla.
 
-**Supabase (futuro):** las mismas migraciones en `supabase/migrations` + RLS ya incluida.
-Runbook completo de migración: `MIGRACION.md` (< 1 hora, 2 env vars).
+**Nhost (respaldo/espejo):** ver `nhost/README.md` — mismo esquema espejado
+(`nhost/migrations` + `nhost/metadata`), mantenido por si algún día se necesita migrar
+de proveedor. No es el backend real hoy; no hay proyecto en app.nhost.io. Runbook de
+referencia (histórico): `MIGRACION.md`.
 
 **Pendiente de cargar** (sin semilla): `tarifa_barco_por_pie3` y `tarifa_avion_zoom_por_kg`.
 
@@ -36,7 +37,7 @@ Runbook completo de migración: `MIGRACION.md` (< 1 hora, 2 env vars).
 cd tecnofal
 npm install
 cd apps/extension
-cp .env.example .env     # VITE_PROVIDER=nhost + subdomain/region (o supabase + url/key)
+cp .env.example .env     # VITE_PROVIDER=supabase + url/key (o nhost + subdomain/region)
 cd ../..
 npm run build
 ```
@@ -80,8 +81,8 @@ npm run test:e2e -w @tecnofal/extension         # e2e con fixtures de eBay (sin 
 ```
 packages/core                → lógica de negocio + interfaces DataProvider/AuthProvider
 packages/provider-local      → §22 IndexedDB/Dexie — la UI SIEMPRE habla con este
-packages/provider-nhost      → adaptador GraphQL/Hasura + nhost-js (espejo)
-packages/provider-supabase   → adaptador supabase-js (espejo futuro)
+packages/provider-supabase   → adaptador supabase-js (espejo activo/principal)
+packages/provider-nhost      → adaptador GraphQL/Hasura + nhost-js (espejo de respaldo)
 apps/extension               → local-first; espejo por VITE_PROVIDER + sync cada 5 min
 ```
 
