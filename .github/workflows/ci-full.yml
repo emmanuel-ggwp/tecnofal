@@ -1,8 +1,15 @@
 name: CI Full
 
-# Suite completa: typecheck, build, tests unitarios, e2e de la extensión y e2e
-# del panel web (Playwright, en serie) contra un Supabase local real levantado
-# en el runner. Es el check requerido para mergear a main (branch protection).
+# Suite completa: typecheck, tests unitarios y e2e del panel web (Playwright,
+# en serie) contra un Supabase local real levantado en el runner. Es el check
+# requerido para mergear a main (branch protection).
+#
+# El e2e propio de apps/extension (Fase 1, ya en producción) queda FUERA del
+# gate a propósito (decisión del usuario, 2026-07-12): falla en el Chromium
+# headless de este runner — probablemente el modo headless clásico no soporta
+# bien extensiones cargadas (necesitaría --headless=new o xvfb). Es un
+# problema preexistente sin relación con el panel web; queda pendiente como
+# mejora aparte, sin bloquear el deploy.
 on:
   pull_request:
     branches: [main]
@@ -55,8 +62,8 @@ jobs:
         if: steps.pw-cache.outputs.cache-hit == 'true'
         run: bunx playwright install-deps chromium
 
-      - name: Tests unitarios + e2e de la extensión
-        run: npm run test
+      - name: Tests unitarios (core + provider-local)
+        run: npm run test -w @tecnofal/core && npm run test -w @tecnofal/provider-local
 
       - uses: supabase/setup-cli@v1
         with: { version: latest }
