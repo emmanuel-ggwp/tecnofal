@@ -9,5 +9,5 @@
     "@supabase/supabase-js": "^2.45.4",
     "@tecnofal/core": "*"
   },
-  "devDependencies": { "typescript": "^5.5.4" }
+  "devDependencies": { "typescript": "^5.5.4", "vitest": "^2.0.5" }
 }
