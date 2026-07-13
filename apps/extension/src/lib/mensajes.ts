@@ -13,7 +13,7 @@ export interface SyncEstado {
   modo: 'sincronizado' | 'pendientes' | 'solo_local';
   pendientes: number;
   ultimo: number | null;
-  espejo: string; // nhost | supabase | ninguno
+  espejo: string; // supabase | nhost | ninguno
 }
 
 export type Solicitud =
