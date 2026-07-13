@@ -57,19 +57,25 @@ test('búsqueda: aparecen badges de semáforo en los resultados', async () => {
   const badges = page.locator('.tf-badge');
   await expect(badges.first()).toBeVisible({ timeout: 20_000 });
   expect(await badges.count()).toBeGreaterThanOrEqual(4);
-  // FOR PARTS y Celeron deben ser rojos
+  // FOR PARTS y Celeron deben bloquear (glifo ✗, sin verde/check — search.ts ya no usa
+  // emoji de color, pinta el fondo vía Badge.color y usa ✓/✗ como glifo, ver renderBadge())
   const textos = await badges.allTextContents();
-  expect(textos.filter((t) => t.includes('🔴')).length).toBeGreaterThanOrEqual(2);
+  expect(textos.filter((t) => t.includes('✗')).length).toBeGreaterThanOrEqual(2);
   await page.close();
 });
 
-test('listing: el panel de evaluación se monta y muestra S_decente / S_max', async () => {
+test('listing: el panel de evaluación se monta y muestra el headline de puja / S_decente', async () => {
+  // "S_max" ya no es un rótulo real del panel (Panel.tsx no lo renderiza como texto —
+  // el headline usa "Puja máxima para ganancia decente" cuando S_decente es alcanzable,
+  // o "...mínimo hasta" cuando solo S_max lo es; son mutuamente excluyentes). Esta laptop
+  // (i5-8350U, 16GB/512GB, batería+cargador confirmados) alcanza ganancia decente, así que
+  // el headline real a esperar es el de "Puja máxima para ganancia decente".
   const page = await context.newPage();
   await page.goto('https://www.ebay.com/itm/111111111111');
   await expect(page.locator('#tecnofal-panel-host')).toBeAttached({ timeout: 20_000 });
   // Playwright atraviesa shadow DOM
+  await expect(page.getByText('Puja máxima para ganancia decente', { exact: false })).toBeVisible();
   await expect(page.getByText('S_decente')).toBeVisible();
-  await expect(page.getByText('S_max')).toBeVisible();
   await expect(page.getByText('Partes faltantes', { exact: false })).toBeVisible();
   await page.close();
 });
