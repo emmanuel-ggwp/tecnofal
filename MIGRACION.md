@@ -1,4 +1,9 @@
-# Runbook: migración Nhost → Supabase (§21) — objetivo < 1 hora
+# Runbook (histórico): migración Nhost → Supabase (§21)
+
+> **Ya no aplica al estado actual.** Esta migración ya se hizo: Supabase es el backend
+> activo/principal (extensión y panel web `apps/web` en Vercel). Nhost quedó como
+> respaldo/espejo — no hay proyecto real en app.nhost.io. Se conserva este runbook como
+> referencia por si algún instalador viejo aún corre sobre Nhost y necesita pasarse.
 
 La lógica de negocio NO se toca: depende solo de las interfaces `DataProvider`/
 `AuthProvider` de `@tecnofal/core`. Las políticas RLS ya viven en las migraciones
@@ -38,10 +43,11 @@ La lógica de negocio NO se toca: depende solo de las interfaces `DataProvider`/
 
 ## Diferencia de modelos de deploy (§21c)
 
-| | Nhost (hoy) | Supabase (futuro) |
+| | Supabase (activo) | Nhost (respaldo, si algún día se activara) |
 |---|---|---|
-| Deploy | **Declarativo**: push a la rama vinculada de GitHub aplica migraciones+metadata | **Imperativo**: `supabase db push` cuando el dev decida |
-| Git | ES el mecanismo de deploy | Opcional |
-| Flujo | rama `main` = producción; trabajar en `dev`, probar con `nhost up` local, merge a `main` solo migraciones probadas | libre |
+| Deploy | **Imperativo**: `supabase db push` cuando el dev decida (hoy: CI + comando manual al proyecto real) | **Declarativo**: push a la rama vinculada de GitHub aplicaría migraciones+metadata |
+| Git | Opcional | Sería el mecanismo de deploy |
+| Flujo | libre | rama `main` = producción; trabajar en `dev`, probar con `nhost up` local, merge a `main` solo migraciones probadas |
 
-**Nunca commitear migraciones sin probar a la rama vinculada de Nhost.**
+**Nunca commitear migraciones sin validarlas primero** (contenedor Postgres desechable —
+ver `planes/README.md`).

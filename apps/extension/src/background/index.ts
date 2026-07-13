@@ -163,7 +163,7 @@ async function manejar(msg: Solicitud): Promise<unknown> {
     }
     case 'cuentas:listar': return remoto ? remoto.listarCuentas().catch(() => []) : [];
     case 'conversion:registrar': {
-      if (!remoto) throw new Error('Las conversiones requieren el espejo (Nhost) con sesión');
+      if (!remoto) throw new Error('Las conversiones requieren el espejo remoto (Supabase) con sesión');
       const r = await remoto.registrarConversion(msg.datos);
       return { ok: true, tasaImplicita: r.tasaImplicita };
     }

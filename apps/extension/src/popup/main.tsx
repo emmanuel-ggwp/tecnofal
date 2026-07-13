@@ -133,7 +133,7 @@ function Popup() {
         <h3 style={{ margin: '0 0 8px' }}>TecnoFal</h3>
         <SyncBar />
         <p>⚡ Sin espejo configurado (<code>.env</code>): todo funciona y se guarda <b>localmente</b>.</p>
-        <p>Configura Nhost/Supabase y recompila para activar el respaldo remoto.</p>
+        <p>Configura Supabase (o Nhost) y recompila para activar el respaldo remoto.</p>
       </div>
     );
   }
