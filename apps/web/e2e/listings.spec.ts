@@ -110,7 +110,9 @@ test.describe('Listings', () => {
   /** Títulos propios de este run, en el orden en que aparecen en la tabla de escritorio. */
   async function tituloOrdenPropio(page: import('@playwright/test').Page): Promise<string[]> {
     const filas = page.locator('table tbody tr');
-    await expect(filas.first()).toBeVisible();
+    // la fila placeholder de "Cargando…" también matchea `tbody tr` — esperar a que aparezca
+    // una fila real de este run, no solo "alguna fila", para no leer el snapshot de carga.
+    await expect(filas.filter({ hasText: String(ts) }).first()).toBeVisible();
     const textos = await filas.allTextContents();
     return textos.filter((t) => t.includes(String(ts))).map((t) => {
       const m = Object.values(T).find((titulo) => t.includes(titulo));
@@ -127,18 +129,23 @@ test.describe('Listings', () => {
 
   test('destildar "Ocultar finalizadas" revela la finalizada', async ({ page }) => {
     await page.goto('/listings');
-    await expect(page.getByText(T.finalizada)).toHaveCount(0);
+    // mobile y desktop coexisten en el DOM (CSS decide cuál se ve) — escopar a la tabla de
+    // escritorio (viewport por defecto de estos tests) evita el "strict mode violation" de
+    // getByText al matchear en ambos.
+    const tabla = page.getByTestId('listings-desktop-tabla');
+    await expect(tabla.getByText(T.finalizada)).toHaveCount(0);
     await page.getByTestId('listings-filtro-ocultar-finalizadas').uncheck();
-    await expect(page.getByText(T.finalizada)).toBeVisible();
+    await expect(tabla.getByText(T.finalizada)).toBeVisible();
   });
 
   test('compradas/descartadas ocultas hasta activar "Incluir compradas/descartadas"', async ({ page }) => {
     await page.goto('/listings');
-    await expect(page.getByText(T.comprado)).toHaveCount(0);
-    await expect(page.getByText(T.descartado)).toHaveCount(0);
+    const tabla = page.getByTestId('listings-desktop-tabla');
+    await expect(tabla.getByText(T.comprado)).toHaveCount(0);
+    await expect(tabla.getByText(T.descartado)).toHaveCount(0);
     await page.getByTestId('listings-filtro-incluir-compradas-descartadas').check();
-    await expect(page.getByText(T.comprado)).toBeVisible();
-    await expect(page.getByText(T.descartado)).toBeVisible();
+    await expect(tabla.getByText(T.comprado)).toBeVisible();
+    await expect(tabla.getByText(T.descartado)).toBeVisible();
   });
 
   test('link a eBay: href y target="_blank" correctos', async ({ page }) => {
@@ -177,9 +184,10 @@ test.describe('Listings', () => {
   test('botón "Refrescar ahora" trae un listing sembrado después de la carga inicial', async ({ page }) => {
     await page.goto('/listings');
     const tituloNuevo = `Listing refresco ${Date.now()}`;
+    const tabla = page.getByTestId('listings-desktop-tabla');
     let idNuevo: string | undefined;
     try {
-      await expect(page.getByText(tituloNuevo)).toHaveCount(0);
+      await expect(tabla.getByText(tituloNuevo)).toHaveCount(0);
 
       const { data, error } = await admin
         .from('listings')
@@ -200,7 +208,7 @@ test.describe('Listings', () => {
       idNuevo = data?.id as string;
 
       await page.getByTestId('listings-refrescar').click();
-      await expect(page.getByText(tituloNuevo)).toBeVisible();
+      await expect(tabla.getByText(tituloNuevo)).toBeVisible();
     } finally {
       if (idNuevo) await admin.from('listings').delete().eq('id', idNuevo);
     }

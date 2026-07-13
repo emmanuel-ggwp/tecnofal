@@ -198,12 +198,20 @@ function encolarCheck(item: Item) {
 // umbral para no generar una escritura por cada scroll cuando el countdown ronda el mismo minuto
 const UMBRAL_ACTUALIZAR_TIEMPO_MS = 2 * 60_000;
 
+/** chrome.runtime.sendMessage serializa `Date` a string ISO — `visto.fechaFinSubasta` llega
+ *  degradado a string aunque EstadoVisto lo tipe `Date | null`. */
+function aFecha(v: Date | string | null | undefined): Date | null {
+  if (v == null) return null;
+  return v instanceof Date ? v : new Date(v);
+}
+
 /** Countdown de la grilla vs. el fechaFinSubasta ya guardado: si divergen lo suficiente (o
  *  el guardado no tiene), empuja la corrección — solo para listings YA guardados (§26). */
 function tiempoDiverge(nuevo: Date | null, guardado: Date | null): boolean {
   if (nuevo == null) return false;
-  if (guardado == null) return true;
-  return Math.abs(nuevo.getTime() - guardado.getTime()) > UMBRAL_ACTUALIZAR_TIEMPO_MS;
+  const guardadoFecha = aFecha(guardado);
+  if (guardadoFecha == null) return true;
+  return Math.abs(nuevo.getTime() - guardadoFecha.getTime()) > UMBRAL_ACTUALIZAR_TIEMPO_MS;
 }
 
 async function flushCola() {

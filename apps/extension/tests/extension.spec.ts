@@ -107,6 +107,9 @@ test('búsqueda: countdown divergente ("Quedan 2h 15m") actualiza el fechaFinSub
   const p2 = await context.newPage();
   await p2.goto('https://www.ebay.com/sch/i.html?_nkw=dell+latitude');
   await expect(p2.locator('.tf-badge').first()).toBeVisible({ timeout: 20_000 });
+  // el envío de listings:actualizarTiempo está debounced 150ms (encolarCheck) — cerrar la página
+  // antes de eso destruye el content script y el mensaje nunca sale.
+  await new Promise((r) => setTimeout(r, 500));
   await p2.close();
   await new Promise((r) => setTimeout(r, 800));
 
