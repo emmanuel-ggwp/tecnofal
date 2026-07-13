@@ -132,6 +132,7 @@ export async function guardarEvaluacion(
     valorEsperadoTotal: resultado.valorEsperado,
     evaluacionManual: { entrada, faltantes, deducciones },
     estado: 'evaluado',
+    fechaFinSubasta: null,
   };
   const { data, error } = await clienteSupabase()
     .from('listings')
@@ -171,6 +172,7 @@ export async function crearLote(input: CrearLoteInput): Promise<{ loteId: string
     valorEsperadoTotal: resultado.valorEsperado,
     evaluacionManual: { entrada, faltantes },
     estado: 'comprado',
+    fechaFinSubasta: null,
   };
 
   const compra: CompraDatos = {

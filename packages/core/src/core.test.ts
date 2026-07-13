@@ -5,6 +5,7 @@ import { PARAMETROS_DEFAULT, type EntradaEvaluacion, type ModeloInfo, type Preci
 import { MODELOS_SEMILLA } from './seeds.js';
 import { badgeDeResultado, colorDeMargen } from './badge.js';
 import { motivoDescarteDe, lineasDeCompra, filasLaptops, type CompraDatos } from './negocio.js';
+import { parsearTiempoRestante, formatearTiempoRestante } from './tiempo.js';
 
 const MODELOS: ModeloInfo[] = [
   { marca: 'Dell', modelo: 'Latitude 5420', ramSoldada: 'no', reglaCompra: 'bloqueada', motivoRegla: 'Carcasa se marca fácil' },
@@ -322,7 +323,7 @@ describe('negocio §12: origen local vs. eBay', () => {
       ebayItemId: 'calc-1', url: '', titulo: 'Dell Latitude 5420',
       precioVisto: 100, semaforo: null, specs: null, precioMaxPuja: null, precioPujaDecente: null,
       cantidadLaptops: 1, costoEstimadoTotal: null, valorEsperadoTotal: null, evaluacionManual: null,
-      estado: 'comprado',
+      estado: 'comprado', fechaFinSubasta: null,
     },
     envioUsa: 10,
     cantidad: 1,
@@ -437,5 +438,72 @@ describe('badge §25', () => {
     const b = badgeDeResultado(r, specs, params);
     expect(r.margen).toBeNull();
     expect(b.color).toBe('hsl(0, 0%, 60%)');
+  });
+});
+
+describe('tiempo: parsearTiempoRestante / formatearTiempoRestante', () => {
+  const AHORA = new Date('2026-01-01T00:00:00.000Z');
+
+  it('formato real confirmado: "Quedan 13m" (grilla de resultados)', () => {
+    const r = parsearTiempoRestante('Quedan 13m', AHORA);
+    expect(r).toEqual(new Date(AHORA.getTime() + 13 * 60_000));
+  });
+
+  it('formato real confirmado: "Finaliza en 12 min 31 s" (página de listing)', () => {
+    const r = parsearTiempoRestante('Finaliza en 12 min 31 s', AHORA);
+    expect(r).toEqual(new Date(AHORA.getTime() + 12 * 60_000 + 31 * 1_000));
+  });
+
+  it('alias en inglés: "2d 3h left"', () => {
+    const r = parsearTiempoRestante('2d 3h left', AHORA);
+    expect(r).toEqual(new Date(AHORA.getTime() + 2 * 86_400_000 + 3 * 3_600_000));
+  });
+
+  it('alias en inglés: "Ends in 5h 23m"', () => {
+    const r = parsearTiempoRestante('Ends in 5h 23m', AHORA);
+    expect(r).toEqual(new Date(AHORA.getTime() + 5 * 3_600_000 + 23 * 60_000));
+  });
+
+  it('texto sin disparador ⇒ null', () => {
+    expect(parsearTiempoRestante('Free shipping', AHORA)).toBeNull();
+    expect(parsearTiempoRestante(null, AHORA)).toBeNull();
+    expect(parsearTiempoRestante(undefined, AHORA)).toBeNull();
+    expect(parsearTiempoRestante('', AHORA)).toBeNull();
+  });
+
+  it('número suelto sin unidad reconocible ⇒ null (no confunde "2" con días)', () => {
+    expect(parsearTiempoRestante('2 available', AHORA)).toBeNull();
+    // con disparador pero sin unidad válida pegada al número tampoco debe matchear
+    expect(parsearTiempoRestante('Quedan 2 available', AHORA)).toBeNull();
+  });
+
+  it('ms <= 0 ⇒ null', () => {
+    expect(parsearTiempoRestante('Quedan 0m', AHORA)).toBeNull();
+  });
+
+  it('formatearTiempoRestante: null de entrada ⇒ null', () => {
+    expect(formatearTiempoRestante(null, AHORA)).toBeNull();
+  });
+
+  it('formatearTiempoRestante: fecha pasada ⇒ Finalizada', () => {
+    const pasado = new Date(AHORA.getTime() - 1_000);
+    expect(formatearTiempoRestante(pasado, AHORA)).toEqual({ texto: 'Finalizada', finalizada: true });
+  });
+
+  it('formatearTiempoRestante: exactamente 2 días 3 horas ⇒ "2d 3h"', () => {
+    const fin = new Date(AHORA.getTime() + 2 * 86_400_000 + 3 * 3_600_000);
+    expect(formatearTiempoRestante(fin, AHORA)).toEqual({ texto: '2d 3h', finalizada: false });
+  });
+
+  it('formatearTiempoRestante: 45 minutos ⇒ "45m"', () => {
+    const fin = new Date(AHORA.getTime() + 45 * 60_000);
+    expect(formatearTiempoRestante(fin, AHORA)).toEqual({ texto: '45m', finalizada: false });
+  });
+
+  it('roundtrip liviano: parsear luego formatear tolera redondeo de piso', () => {
+    const fin = parsearTiempoRestante('5h 23m left', AHORA);
+    const f = formatearTiempoRestante(fin, AHORA);
+    expect(f?.finalizada).toBe(false);
+    expect(f?.texto).toMatch(/^5h (22|23)m$/);
   });
 });

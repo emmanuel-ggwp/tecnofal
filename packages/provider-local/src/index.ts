@@ -55,6 +55,13 @@ interface FilaDetalle { nombre: string; deduccionBase: number; categoria?: strin
 interface FilaParteRef { nombre: string; precioReferencia: number; valorNominal: number | null }
 interface FilaMeta { k: string; v: unknown }
 
+/** chrome.runtime.sendMessage serializa `Date` a string ISO — cualquier valor que haya
+ *  cruzado un mensaje content↔background puede llegar aquí como string aunque el tipo diga `Date`. */
+function aFecha(v: Date | string | null | undefined): Date | null {
+  if (v == null) return null;
+  return v instanceof Date ? v : new Date(v);
+}
+
 /** Backfill por patrón del nombre (espejo de la migración 0009) para detalles creados por el usuario */
 function categoriaPorNombre(nombre: string): string {
   const n = nombre.toLowerCase();
@@ -248,6 +255,7 @@ export class ProveedorLocal implements DataProvider {
         ebayItemId: f.ebayItemId, semaforo: f.datos.semaforo, estado: f.datos.estado,
         margen, ganancia: costo != null && valor != null ? valor - costo : null, costo: costo ?? null,
         motivoDescarte: motivoDescarteDe(f.datos.evaluacionManual),
+        fechaFinSubasta: f.datos.fechaFinSubasta ?? null,
       };
     });
   }
@@ -263,8 +271,23 @@ export class ProveedorLocal implements DataProvider {
     // NUNCA debe pisarlo — se perdería el vínculo con el lote y el candado del panel.
     if (ex?.datos.estado === 'comprado' && l.estado === 'visto') return;
     await this.db.listings.put({
-      ebayItemId: l.ebayItemId, datos: l, actualizado: Date.now(), dirty: 1, manual: 1,
+      ebayItemId: l.ebayItemId,
+      datos: { ...l, fechaFinSubasta: aFecha(l.fechaFinSubasta) },
+      actualizado: Date.now(), dirty: 1, manual: 1,
       loteLocal: ex?.loteLocal ?? null,
+    });
+  }
+
+  /** §26: actualiza SOLO fechaFinSubasta de un listing YA guardado (grilla de búsqueda detecta que el
+   *  countdown guardado quedó desactualizado). No crea filas nuevas — si nunca se guardó, no hace nada. */
+  async actualizarTiempoListing(ebayItemId: string, fechaFinSubasta: Date | null): Promise<void> {
+    const ex = await this.db.listings.get(ebayItemId);
+    if (!ex) return;
+    await this.db.listings.put({
+      ...ex,
+      datos: { ...ex.datos, fechaFinSubasta: aFecha(fechaFinSubasta) },
+      actualizado: Date.now(),
+      dirty: 1,
     });
   }
 

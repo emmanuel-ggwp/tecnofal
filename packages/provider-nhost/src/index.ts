@@ -153,6 +153,10 @@ export class ProveedorNhost implements Proveedor {
           ebayItemId: r.ebay_item_id, semaforo: r.semaforo, estado: r.estado,
           margen, ganancia: costo != null && valor != null ? valor - costo : null, costo: costo ?? null,
           motivoDescarte: motivoDescarteDe(r.evaluacion_manual),
+          // Nhost es respaldo/legacy (Supabase es el backend principal): su esquema Hasura no
+          // tiene fecha_fin_subasta (migración 0028 solo se aplicó a Supabase) — no se consulta
+          // para no romper este proveedor en runtime con una columna inexistente.
+          fechaFinSubasta: null,
         };
       });
     } catch {

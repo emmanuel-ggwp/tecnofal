@@ -9,6 +9,7 @@ import { ConversionRapida } from './cuentas/ConversionRapida';
 const RUTAS: { href: string; nombre: string }[] = [
   { href: '/', nombre: 'Dashboard' },
   { href: '/inventario', nombre: 'Inventario' },
+  { href: '/listings', nombre: 'Listings' },
   { href: '/calculadora', nombre: 'Calculadora' },
   { href: '/lotes', nombre: 'Lotes' },
   { href: '/partes', nombre: 'Partes' },

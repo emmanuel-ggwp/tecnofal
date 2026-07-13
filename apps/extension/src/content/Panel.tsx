@@ -486,6 +486,9 @@ export function Panel(p: PanelProps) {
     costoEstimadoTotal: r.cadena.total,
     valorEsperadoTotal: r.valorEsperado,
     evaluacionManual: { entrada, faltantes, deducciones, bloqueosDescartados: descartados, motivoDescarte: motivo }, estado,
+    // sin esto, cualquier acción del panel (guardar/comprar/descartar) borraría a null el
+    // countdown ya capturado por marcarVisto() al abrir la página — nunca se re-captura aquí.
+    fechaFinSubasta: p.guardado?.fechaFinSubasta ?? null,
   });
 
   const accion = async (fn: () => Promise<unknown>, ok: string, alOk?: () => void) => {

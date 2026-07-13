@@ -1,5 +1,6 @@
 // Panel lateral de evaluación en la página del listing (§5.2)
 import { createRoot } from 'react-dom/client';
+import { parsearTiempoRestante } from '@tecnofal/core';
 import { catalogoConReintento, enviar, type Catalogo, type EstadoVisto, type ListingGuardar } from '../lib/mensajes';
 import { esGratis, parsearPrecio } from '../lib/precios';
 import { evaluarListado } from '../lib/eval';
@@ -32,6 +33,12 @@ function envioDePagina(): number {
     if (precio != null) return precio;
   }
   return 0;
+}
+
+/** Countdown de la página individual: "Finaliza en 12 min 31 s" → fecha absoluta de cierre */
+function fechaFinDePagina(): Date | null {
+  const txt = texto('[data-testid="ux-timer_timer"], .ux-timer__text') || null;
+  return parsearTiempoRestante(txt);
 }
 
 function extraerPagina() {
@@ -75,6 +82,7 @@ async function marcarVisto(pagina: ReturnType<typeof extraerPagina>, catalogo: C
       valorEsperadoTotal: ev?.resultado.valorEsperado ?? null,
       evaluacionManual: null,
       estado: 'visto',
+      fechaFinSubasta: fechaFinDePagina(),
     };
     await enviar({ tipo: 'listings:guardar', listing });
   } catch { /* modo degradado: sin registro de vistos */ }

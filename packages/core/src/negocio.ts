@@ -37,6 +37,8 @@ export interface ListingGuardar {
   valorEsperadoTotal: number | null;
   evaluacionManual: unknown;
   estado: 'visto' | 'evaluado' | 'comprado' | 'descartado';
+  /** hora absoluta de cierre de la subasta de eBay, parseada de texto relativo (ver tiempo.ts). null = no capturado */
+  fechaFinSubasta: Date | null;
 }
 
 export interface CompraDatos {
@@ -71,6 +73,8 @@ export interface EstadoVisto {
   costo: number | null;
   /** motivo del descarte/rechazo por publicación (vive en evaluacionManual.motivoDescarte) */
   motivoDescarte: string | null;
+  /** hora absoluta de cierre de la subasta de eBay. null = no capturado */
+  fechaFinSubasta: Date | null;
 }
 
 /** extrae el motivo de descarte del JSON evaluacion_manual sin asumir su forma
@@ -154,6 +158,7 @@ export function listingAFila(l: ListingGuardar) {
     valor_esperado_total: l.valorEsperadoTotal,
     evaluacion_manual: l.evaluacionManual as object,
     estado: l.estado,
+    fecha_fin_subasta: l.fechaFinSubasta ? l.fechaFinSubasta.toISOString() : null,
   };
 }
 

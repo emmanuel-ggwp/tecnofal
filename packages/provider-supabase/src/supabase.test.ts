@@ -45,6 +45,7 @@ const listing = (id: string): ListingGuardar => ({
   ebayItemId: id, url: 'u', titulo: 't', precioVisto: 100, semaforo: 'verde', specs: null,
   precioMaxPuja: 50, precioPujaDecente: 40, cantidadLaptops: 1,
   costoEstimadoTotal: 150, valorEsperadoTotal: 220, evaluacionManual: {}, estado: 'evaluado',
+  fechaFinSubasta: null,
 });
 const compra = (): CompraDatos => ({
   listing: listing('777'), envioUsa: 10, cantidad: 1, metodo: 'barco', faltantes: [],
