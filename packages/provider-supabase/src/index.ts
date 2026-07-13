@@ -7,6 +7,30 @@ import {
   type PrecioIdeal, type Proveedor, type SesionInfo,
 } from '@tecnofal/core';
 
+// Mapeo campo de dominio (camelCase) ↔ columna `clave` (snake_case) de la tabla `parametros`.
+// Espejo del mapeo inverso de cargarCatalogo; se usa para el push (guardarConfig).
+const CLAVES_PARAM: [keyof Parametros, string][] = [
+  ['impuestoEbay', 'impuesto_ebay'],
+  ['seguroValorDeclarado', 'seguro_valor_declarado'],
+  ['seguroZoom', 'seguro_zoom'],
+  ['comisionZinliEstimada', 'comision_zinli_estimada'],
+  ['costoRevision', 'costo_revision'],
+  ['gananciaMinima', 'ganancia_minima'],
+  ['gananciaDecente', 'ganancia_decente'],
+  ['tarifaBarcoPorPie3', 'tarifa_barco_por_pie3'],
+  ['tarifaAvionZoomPorKg', 'tarifa_avion_zoom_por_kg'],
+  ['envioVzlaPorLaptop', 'envio_vzla_por_laptop'],
+];
+
+// `detalles_catalogo.categoria` es el enum detalle_categoria_t. Local puede traer valores fuera
+// del enum (ej. 'Otro' con mayúscula, o texto libre); se normaliza a minúsculas y se valida,
+// con fallback 'otro', para no violar el enum ni bloquear el push.
+const CATS_DETALLE = new Set(['carcasa', 'pantalla', 'puertos', 'bateria', 'teclado', 'touchpad', 'audio', 'otro', 'specs']);
+function categoriaValida(c: string): string {
+  const x = String(c ?? '').toLowerCase();
+  return CATS_DETALLE.has(x) ? x : 'otro';
+}
+
 export class ProveedorSupabase implements Proveedor {
   private sb: SupabaseClient;
 
@@ -189,6 +213,60 @@ export class ProveedorSupabase implements Proveedor {
       const { error: eA } = await this.sb.from('modelo_avisos')
         .insert({ modelo_id: mod.id, tipo_aviso_id: tipo.id, severidad: a.severidad, motivo: a.motivo, origen: 'usuario' });
       if (eA) throw new Error(eA.message);
+    }
+  }
+
+  /**
+   * Push de config local → Supabase. ADITIVO Y SEGURO por diseño:
+   *  - Solo `upsert` por clave natural; NUNCA `delete`. Imposible perder datos remotos.
+   *  - Salta cualquier sección local vacía (inverso del incidente pull-vacío: jamás barre el espejo).
+   *  - No envía `user_id` (lo estampa el trigger); RLS confina cada fila a su dueño.
+   *  - Cualquier error → throw, para que el sync NO marque la config limpia y reintente.
+   * ALCANCE: solo las 5 tablas POR-USUARIO. `modelos` (GLOBAL/compartida) queda FUERA a propósito:
+   * muchos modelos locales tienen cpu_tipo nulo y un upsert batch pisaría conocimiento curado de
+   * otros usuarios. El conocimiento de modelos se comparte por su canal dedicado (§23 publicarAvisos).
+   */
+  async guardarConfig(config: Catalogo): Promise<void> {
+    // parametros: omite los de valor null (no pisar un valor remoto con "sin valor vigente")
+    const paramFilas = CLAVES_PARAM
+      .map(([campo, clave]) => ({ clave, valor: config.parametros[campo] }))
+      .filter((f) => f.valor != null);
+    if (paramFilas.length > 0) {
+      const { error } = await this.sb.from('parametros').upsert(paramFilas, { onConflict: 'user_id,clave' });
+      if (error) throw new Error(error.message);
+    }
+
+    // precios_ideales: clave natural añadida en la migración 0027
+    if (config.precios.length > 0) {
+      const { error } = await this.sb.from('precios_ideales').upsert(
+        config.precios.map((p) => ({ cpu_tipo: p.cpuTipo, gen_desde: p.genDesde, gen_hasta: p.genHasta, precio_base: p.precioBase })),
+        { onConflict: 'user_id,cpu_tipo,gen_desde,gen_hasta' },
+      );
+      if (error) throw new Error(error.message);
+    }
+
+    // ajustes_config
+    const ajusteFilas = Object.entries(config.ajustes).map(([clave, delta]) => ({ clave, delta }));
+    if (ajusteFilas.length > 0) {
+      const { error } = await this.sb.from('ajustes_config').upsert(ajusteFilas, { onConflict: 'user_id,clave' });
+      if (error) throw new Error(error.message);
+    }
+
+    // detalles_catalogo: categoria normalizada al enum (fallback 'otro')
+    if (config.detalles.length > 0) {
+      const { error } = await this.sb.from('detalles_catalogo').upsert(
+        config.detalles.map((d) => ({ nombre: d.nombre, deduccion_base: d.deduccionBase, categoria: categoriaValida(d.categoria) })),
+        { onConflict: 'user_id,nombre' },
+      );
+      if (error) throw new Error(error.message);
+    }
+
+    // partes_catalogo: solo nombre + precio_referencia (columnas omitidas como valor_nominal
+    // se PRESERVAN en el update; upsert no las toca). partesRef nunca trae precio null.
+    const parteFilas = Object.entries(config.partesRef).map(([nombre, precio]) => ({ nombre, precio_referencia: precio }));
+    if (parteFilas.length > 0) {
+      const { error } = await this.sb.from('partes_catalogo').upsert(parteFilas, { onConflict: 'user_id,nombre' });
+      if (error) throw new Error(error.message);
     }
   }
 

@@ -9,7 +9,7 @@
   "scripts": {
     "build": "npm run build -w @tecnofal/core && npm run build -w @tecnofal/extension",
     "typecheck": "npm run typecheck -w @tecnofal/core && npm run typecheck -w @tecnofal/provider-supabase && npm run typecheck -w @tecnofal/provider-nhost && npm run typecheck -w @tecnofal/provider-local && npm run typecheck -w @tecnofal/extension",
-    "test": "npm run test -w @tecnofal/core && npm run test -w @tecnofal/provider-local && npm run test:e2e -w @tecnofal/extension",
+    "test": "npm run test -w @tecnofal/core && npm run test -w @tecnofal/provider-local && npm run test -w @tecnofal/provider-supabase && npm run test:e2e -w @tecnofal/extension",
     "db:start": "supabase start",
     "db:reset": "supabase db reset",
     "lint": "eslint ."

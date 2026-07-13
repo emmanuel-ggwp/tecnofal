@@ -126,6 +126,13 @@ export interface DataProvider {
     tipos: { clave: string; nombre: string }[],
     avisos: { marca: string; modelo: string; tipoClave: string; severidad: string; motivo: string | null }[],
   ): Promise<void>;
+  /**
+   * Push de config local → espejo (opcional). ADITIVO Y SEGURO: solo hace upsert por clave
+   * natural, NUNCA borra filas remotas, y salta cualquier sección local vacía (para que sea
+   * imposible barrer la config del espejo — el inverso del incidente pull-vacío). Debe lanzar
+   * si alguna escritura falla, para que el sync no marque la config como limpia y reintente.
+   */
+  guardarConfig?(config: Catalogo): Promise<void>;
 }
 
 export type Proveedor = AuthProvider & DataProvider;

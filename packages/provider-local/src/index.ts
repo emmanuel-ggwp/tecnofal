@@ -299,6 +299,8 @@ export class ProveedorLocal implements DataProvider {
 
   private async marcarConfigDirty() { await this.db.meta.put({ k: 'configDirty', v: Date.now() }); }
   async configDirty(): Promise<boolean> { return (await this.db.meta.get('configDirty')) != null; }
+  /** Tras un push de config exitoso al espejo: reabre el pull LWW (aplicarConfigRemota vuelve a fluir). */
+  async marcarConfigLimpio(): Promise<void> { await this.db.meta.delete('configDirty'); }
 
   async guardarParametro(clave: string, valor: number | null): Promise<void> {
     await this.db.parametros.put({ clave, valor, descripcion: null });

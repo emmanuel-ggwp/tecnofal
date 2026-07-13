@@ -51,6 +51,15 @@ async function sincronizar(): Promise<void> {
         for (const a of avisosS) await local.marcarAvisoLimpio(a.id);
       } catch { /* reintento */ }
     }
+    // push de config local → espejo (aditivo: solo upsert, jamás borra; salta secciones vacías).
+    // Va ANTES del pull: al subir y limpiar el flag, el pull deja de estar bloqueado y reconcilia.
+    if ((await local.configDirty()) && remoto.guardarConfig) {
+      try {
+        await remoto.guardarConfig(await local.cargarCatalogo());
+        await local.marcarConfigLimpio();
+      } catch (e) { console.error('[sync] config', e); /* queda dirty → reintento en el próximo ciclo */ }
+    }
+
     // pull de config: LWW — pero la config editada localmente y los overrides NUNCA se pisan
     const cat = await remoto.cargarCatalogo();
     if (cat) await local.aplicarConfigRemota(cat);
@@ -118,20 +127,24 @@ async function manejar(msg: Solicitud): Promise<unknown> {
     case 'config:leer': return local.leerConfig();
     case 'config:parametro': {
       await local.guardarParametro(msg.clave, msg.valor);
+      void sincronizar();
       return { ok: true };
     }
     case 'config:seccion': {
       await local.reemplazarSeccion(msg.seccion, msg.filas);
+      void sincronizar();
       return { ok: true };
     }
     case 'config:exportar': return { json: await local.exportarJSON() };
     case 'config:importar': {
       await local.importarJSON(msg.json);
+      void sincronizar();
       return { ok: true };
     }
 
     case 'detalle:crear': {
       await local.crearDetalle(msg.detalle);
+      void sincronizar();
       return { ok: true };
     }
     case 'modelo:marcar': {
