@@ -144,6 +144,15 @@ describe('provider-local (§22)', () => {
     expect((await p2.checkListings(['555']))[0].estado).toBe('evaluado');
   });
 
+  it('marcarConfigLimpio reabre el pull tras un push exitoso (el flag dirty ya no bloquea)', async () => {
+    const remoto = await new ProveedorLocal(`test-rem3-${n}`).cargarCatalogo(); // semilla: 0.7
+    await p.guardarParametro('ganancia_decente', 0.9); // dirty → el pull quedaría bloqueado
+    await p.marcarConfigLimpio();                       // simula un push exitoso al espejo
+    expect(await p.configDirty()).toBe(false);
+    await p.aplicarConfigRemota(remoto);               // ahora SÍ aplica (compuerta reabierta)
+    expect((await p.cargarCatalogo()).parametros.gananciaDecente).toBe(0.7);
+  });
+
   it('crearDetalle marca dirty y el pull remoto no lo pisa', async () => {
     const remoto = await new ProveedorLocal(`test-rem2-${n}`).cargarCatalogo();
     await p.crearDetalle({ categoria: 'puertos', nombre: 'Puerto carga flojo', deduccionBase: 12 });

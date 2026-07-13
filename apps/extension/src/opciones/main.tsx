@@ -58,6 +58,12 @@ function Opciones() {
         Todo se edita y guarda en tu navegador; el backend remoto es solo un espejo.
         {msg && <b style={{ color: '#16a34a', marginLeft: 12 }}>{msg}</b>}
       </p>
+      <p style={{ color: '#9ca3af', fontSize: 12, marginTop: -4 }}>
+        La sincronización al espejo es <b>aditiva</b>: sube y actualiza filas, pero <b>no borra</b>.
+        Si eliminas una fila aquí, el borrado no se propaga (y puede reaparecer al sincronizar);
+        para quitarla del espejo, hazlo en Supabase. Las ediciones de <b>modelos</b> quedan locales
+        (el conocimiento de modelos se comparte con el flujo ⚑ del panel).
+      </p>
       <p>
         <button className="primario" onClick={() => void exportar()}>⬇ Exportar respaldo JSON</button>{' '}
         <label style={{ display: 'inline-block' }}>
