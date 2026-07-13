@@ -135,7 +135,7 @@ export class ProveedorSupabase implements Proveedor {
   async checkListings(ids: string[]): Promise<EstadoVisto[]> {
     if (ids.length === 0) return [];
     const { data, error } = await this.sb
-      .from('listings').select('ebay_item_id, semaforo, estado, costo_estimado_total, valor_esperado_total, evaluacion_manual').in('ebay_item_id', ids);
+      .from('listings').select('ebay_item_id, semaforo, estado, costo_estimado_total, valor_esperado_total, evaluacion_manual, fecha_fin_subasta').in('ebay_item_id', ids);
     if (error) return [];
     return (data ?? []).map((r) => {
       const costo = r.costo_estimado_total as number | null;
@@ -145,6 +145,7 @@ export class ProveedorSupabase implements Proveedor {
         ebayItemId: r.ebay_item_id, semaforo: r.semaforo, estado: r.estado,
         margen, ganancia: costo != null && valor != null ? valor - costo : null, costo: costo ?? null,
         motivoDescarte: motivoDescarteDe(r.evaluacion_manual),
+        fechaFinSubasta: r.fecha_fin_subasta ? new Date(r.fecha_fin_subasta as string) : null,
       };
     });
   }

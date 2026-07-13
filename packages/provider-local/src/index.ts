@@ -248,6 +248,7 @@ export class ProveedorLocal implements DataProvider {
         ebayItemId: f.ebayItemId, semaforo: f.datos.semaforo, estado: f.datos.estado,
         margen, ganancia: costo != null && valor != null ? valor - costo : null, costo: costo ?? null,
         motivoDescarte: motivoDescarteDe(f.datos.evaluacionManual),
+        fechaFinSubasta: f.datos.fechaFinSubasta ?? null,
       };
     });
   }
@@ -265,6 +266,19 @@ export class ProveedorLocal implements DataProvider {
     await this.db.listings.put({
       ebayItemId: l.ebayItemId, datos: l, actualizado: Date.now(), dirty: 1, manual: 1,
       loteLocal: ex?.loteLocal ?? null,
+    });
+  }
+
+  /** §26: actualiza SOLO fechaFinSubasta de un listing YA guardado (grilla de búsqueda detecta que el
+   *  countdown guardado quedó desactualizado). No crea filas nuevas — si nunca se guardó, no hace nada. */
+  async actualizarTiempoListing(ebayItemId: string, fechaFinSubasta: Date | null): Promise<void> {
+    const ex = await this.db.listings.get(ebayItemId);
+    if (!ex) return;
+    await this.db.listings.put({
+      ...ex,
+      datos: { ...ex.datos, fechaFinSubasta },
+      actualizado: Date.now(),
+      dirty: 1,
     });
   }
 

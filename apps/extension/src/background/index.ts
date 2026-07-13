@@ -118,6 +118,11 @@ async function manejar(msg: Solicitud): Promise<unknown> {
       void sincronizar();
       return { ok: true };
     }
+    case 'listings:actualizarTiempo': {
+      await local.actualizarTiempoListing(msg.ebayItemId, msg.fechaFinSubasta);
+      void sincronizar();
+      return { ok: true };
+    }
     case 'comprar': {
       const r = await local.comprar(msg.datos);
       void sincronizar();

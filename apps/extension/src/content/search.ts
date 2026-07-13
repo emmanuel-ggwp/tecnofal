@@ -1,7 +1,7 @@
 // §25: semáforo con ganancia en resultados de búsqueda de eBay.
 // Evaluación provisional pesimista (§20) por título; se resuelve "ya visto"/confirmado por lote (§16).
 // Incremental por viewport (IntersectionObserver) para no trabar el scroll en búsquedas largas.
-import { badgeDeResultado, colorDeMargen, type Badge } from '@tecnofal/core';
+import { badgeDeResultado, colorDeMargen, parsearTiempoRestante, type Badge } from '@tecnofal/core';
 import { catalogoConReintento, enviar, type Catalogo, type EstadoVisto } from '../lib/mensajes';
 import { evaluarListado } from '../lib/eval';
 import { esGratis, parsearPrecio } from '../lib/precios';
@@ -53,6 +53,8 @@ interface Item {
   precio: number | null;
   envio: number;
   itemId: string | null;
+  /** texto crudo del countdown de la grilla ("Quedan 13m") — null si no hay o no es subasta */
+  tiempoRestanteTexto: string | null;
 }
 
 function extraerItem(el: Element): Item | null {
@@ -67,7 +69,8 @@ function extraerItem(el: Element): Item | null {
     .map((s) => s.textContent?.trim())
     .filter(Boolean)
     .join(' · ');
-  return { el, tituloEl, titulo, subtitulo, precio, envio, itemId };
+  const tiempoRestanteTexto = el.querySelector('.s-card__time-left, .s-item__time-left')?.textContent?.trim() ?? null;
+  return { el, tituloEl, titulo, subtitulo, precio, envio, itemId, tiempoRestanteTexto };
 }
 
 function tooltipDe(badge: Badge, provisional: boolean, bloqueos: string[] = [], alertas: string[] = []): string {
@@ -192,6 +195,17 @@ function encolarCheck(item: Item) {
   }
 }
 
+// umbral para no generar una escritura por cada scroll cuando el countdown ronda el mismo minuto
+const UMBRAL_ACTUALIZAR_TIEMPO_MS = 2 * 60_000;
+
+/** Countdown de la grilla vs. el fechaFinSubasta ya guardado: si divergen lo suficiente (o
+ *  el guardado no tiene), empuja la corrección — solo para listings YA guardados (§26). */
+function tiempoDiverge(nuevo: Date | null, guardado: Date | null): boolean {
+  if (nuevo == null) return false;
+  if (guardado == null) return true;
+  return Math.abs(nuevo.getTime() - guardado.getTime()) > UMBRAL_ACTUALIZAR_TIEMPO_MS;
+}
+
 async function flushCola() {
   if (idAItems.size === 0 || !catalogoGlobal) return;
   const ids = [...idAItems.keys()];
@@ -205,6 +219,14 @@ async function flushCola() {
         const visto = vistos.get(id);
         if (!visto) continue;
         for (const item of items) evaluarYPintar(item, catalogoGlobal, new Map([[id, visto]]));
+        // el primer item de la lista basta: todos comparten el mismo itemId/countdown
+        const conTiempo = items.find((it) => it.tiempoRestanteTexto != null);
+        if (conTiempo) {
+          const fechaFinSubasta = parsearTiempoRestante(conTiempo.tiempoRestanteTexto);
+          if (tiempoDiverge(fechaFinSubasta, visto.fechaFinSubasta)) {
+            void enviar({ tipo: 'listings:actualizarTiempo', ebayItemId: id, fechaFinSubasta }).catch(() => {});
+          }
+        }
       }
     }
   } catch { /* modo degradado sin ✓/confirmación */ }

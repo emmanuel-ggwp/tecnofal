@@ -26,6 +26,7 @@ export type Solicitud =
   | { tipo: 'listings:check'; ids: string[] }
   | { tipo: 'listings:obtener'; id: string }
   | { tipo: 'listings:guardar'; listing: ListingGuardar }
+  | { tipo: 'listings:actualizarTiempo'; ebayItemId: string; fechaFinSubasta: Date | null }
   | { tipo: 'comprar'; datos: CompraDatos }
   | { tipo: 'config:leer' }
   | { tipo: 'config:parametro'; clave: string; valor: number | null }
