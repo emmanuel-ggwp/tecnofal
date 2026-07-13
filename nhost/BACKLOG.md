@@ -13,4 +13,4 @@ timestamp, y regenerar `metadata/` si tocó tablas nuevas).
 
 | Migración Supabase | Fecha agregada | Nota |
 |---|---|---|
-| _(ninguna todavía — la próxima migración nueva de `supabase/migrations/` se agrega aquí en vez de copiarse a `migrations/default/`)_ | | |
+| `0028_listings_fecha_fin_subasta.sql` | 2026-07-12 | Agrega `listings.fecha_fin_subasta` (timestamptz, nullable) + índice `idx_listings_user_fecha_fin`. Sin cambios de RLS/GRANT (ya cubiertos genéricamente). |
