@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import {
-  evaluar, parseListing,
+  evaluar, parseListing, precioBasePara,
   type Confianza, type CpuTipo, type DetalleCat, type EntradaEvaluacion, type MetodoEnvio, type ModeloInfo, type Semaforo,
 } from '@tecnofal/core';
 import { enviar, type Catalogo, type ListingGuardar } from '../lib/mensajes';
@@ -298,6 +298,8 @@ export function Panel(p: PanelProps) {
   // pantalla: base 14" (13.3 cuenta como 14); opciones 12.5 / 14 / 15.6 / 17
   const bucketDe = (v: number | null): '12.5' | '14' | '15.6' | '17' =>
     v == null ? '14' : v <= 12.9 ? '12.5' : v < 15 ? '14' : v < 16.5 ? '15.6' : '17';
+  // Valor base manual: se usa solo cuando el catálogo no reconoce la CPU/gen (sin fila en precios_ideales)
+  const [baseManual, setBaseManual] = useState<number | ''>('');
   const [pulgadas, setPulgadas] = useState<number>(eg?.pantallaPulgadas ?? specs.pantallaPulgadas.valor ?? 14);
   const [pantallas, setPantallas] = useState<Record<'12.5' | '14' | '15.6' | '17', number>>(() => {
     const b = { '12.5': 0, '14': 0, '15.6': 0, '17': 0 };
@@ -439,9 +441,24 @@ export function Panel(p: PanelProps) {
     pantallaTactil: tactil,
     bloqueado: specs.bloqueos.some((b) => !descartados.includes(b)),
   };
+  // ¿El catálogo reconoce esta CPU/gen? Si no, habilitamos un "Valor base" manual.
+  const precioBaseCatalogo = useMemo(
+    () => precioBasePara(entrada.cpuTipo, entrada.cpuGen, catalogo.precios, catalogo.ajustes),
+    [entrada.cpuTipo, entrada.cpuGen, catalogo.precios, catalogo.ajustes],
+  );
+  const sinBase = precioBaseCatalogo == null;
+  // Cuando no hay fila en precios_ideales y el usuario tecleó un valor base, inyectamos una fila sintética
+  // para esta CPU/gen exacta: el core la calza como coincidencia exacta y recalcula todo (ajustes incluidos).
+  const preciosEval = useMemo(() => {
+    if (!sinBase || baseManual === '' || entrada.cpuTipo == null || entrada.cpuGen == null) return catalogo.precios;
+    return [
+      { cpuTipo: entrada.cpuTipo, genDesde: entrada.cpuGen, genHasta: entrada.cpuGen, precioBase: Number(baseManual) },
+      ...catalogo.precios,
+    ];
+  }, [sinBase, baseManual, entrada.cpuTipo, entrada.cpuGen, catalogo.precios]);
   const r = useMemo(
-    () => evaluar(entrada, catalogo.parametros, catalogo.precios, catalogo.ajustes),
-    [JSON.stringify(entrada)], // recalcular cuando cambia cualquier campo de la entrada
+    () => evaluar(entrada, catalogo.parametros, preciosEval, catalogo.ajustes),
+    [JSON.stringify(entrada), preciosEval], // recalcular cuando cambia cualquier campo de la entrada o el base manual
   );
 
   const ganancia = r.valorEsperado != null ? r.valorEsperado - r.cadena.total : null;
@@ -586,15 +603,54 @@ export function Panel(p: PanelProps) {
           <div>{verPorUnidad && cantidad > 1 ? 'Valor/laptop' : 'Valor esperado'}<br /><b style={{ fontSize: 15 }}>{valorMostrar != null ? `$${valorMostrar.toFixed(0)}` : '—'}</b></div>
           <div>{verPorUnidad && cantidad > 1 ? 'Costo/laptop' : 'Costo total est.'}<br /><b style={{ fontSize: 15 }}>${costoMostrar.toFixed(0)}</b></div>
         </div>
-        {r.sMax == null && r.sinPujaMotivo ? (
+        {r.sMax == null && r.sinPujaMotivo && !sinBase ? (
           <div style={{ marginTop: 6, fontSize: 12.5, fontWeight: 700, background: 'rgba(0,0,0,.25)', borderRadius: 6, padding: '4px 6px' }}>
             🚫 {r.sinPujaMotivo}
           </div>
         ) : (
-          <div style={{ display: 'flex', justifyContent: 'space-around', marginTop: 6, fontSize: 12 }}>
-            <div title="Hasta aquí, verde (ganancia decente)">S_decente<br /><b style={{ fontSize: 15 }}>{r.sDecente != null ? `${r.sDecente.toFixed(2)}` : '—'}</b></div>
-            <div title="Valor esperado − costo total estimado, al precio actual">Ganancia est.<br /><b style={{ fontSize: 15 }}>{gananciaMostrar != null ? `${gananciaMostrar >= 0 ? '+' : '−'}$${Math.abs(gananciaMostrar).toFixed(0)}` : '—'}</b></div>
-          </div>
+          <>
+            {sinBase && r.sinPujaMotivo && (
+              <div style={{ marginTop: 6, fontSize: 12.5, fontWeight: 700, background: 'rgba(0,0,0,.25)', borderRadius: 6, padding: '4px 6px' }}>
+                🚫 {r.sinPujaMotivo}
+              </div>
+            )}
+            <div style={{ display: 'flex', justifyContent: 'space-around', marginTop: 6, fontSize: 12 }}>
+              {sinBase ? (
+                <div title="El sistema no reconoce esta CPU/generación (sin fila en precios_ideales). Escribe un valor base manual para calcular; 💾 lo guarda para no repetirlo.">
+                  Valor base<br />
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                    <input
+                      type="number"
+                      min={0}
+                      value={baseManual}
+                      onChange={(e) => setBaseManual(e.target.value === '' ? '' : Number(e.target.value))}
+                      placeholder="—"
+                      style={{ width: 58, fontSize: 15, fontWeight: 700, textAlign: 'center', border: 'none', borderRadius: 4, padding: '1px 2px', background: 'rgba(255,255,255,.92)', color: '#111827' }}
+                    />
+                    {baseManual !== '' && cpuTipo && cpuGen !== '' && (
+                      <button
+                        title="Guardar como fila en precios_ideales para esta CPU/generación (no volver a teclearlo)"
+                        disabled={ocupado}
+                        onClick={() => {
+                          const gen = Number(cpuGen);
+                          const filas = [...catalogo.precios, { cpuTipo, genDesde: gen, genHasta: gen, precioBase: Number(baseManual) }];
+                          void accion(
+                            () => enviar<{ ok?: boolean; error?: string }>({ tipo: 'config:seccion', seccion: 'precios', filas }),
+                            `✔ Base $${Number(baseManual)} guardada para ${cpuTipo} gen ${gen}`,
+                            () => setCatalogo({ ...catalogo, precios: filas }),
+                          );
+                        }}
+                        style={{ ...css.boton, background: 'rgba(255,255,255,.92)', color: '#111827', padding: '2px 6px', fontSize: 12 }}
+                      >💾</button>
+                    )}
+                  </span>
+                </div>
+              ) : (
+                <div title="Hasta aquí, verde (ganancia decente)">S_decente<br /><b style={{ fontSize: 15 }}>{r.sDecente != null ? `${r.sDecente.toFixed(2)}` : '—'}</b></div>
+              )}
+              <div title="Valor esperado − costo total estimado, al precio actual">Ganancia est.<br /><b style={{ fontSize: 15 }}>{gananciaMostrar != null ? `${gananciaMostrar >= 0 ? '+' : '−'}$${Math.abs(gananciaMostrar).toFixed(0)}` : '—'}</b></div>
+            </div>
+          </>
         )}
         {r.semaforo === 'amarillo' && r.sDecente != null && (
           <div style={{ marginTop: 6, fontSize: 12, fontWeight: 700, background: 'rgba(255,255,255,.22)', borderRadius: 6, padding: '4px 8px' }}>
