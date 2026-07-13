@@ -1,4 +1,26 @@
-# Handoff — Feature "Listings" en el panel web — 2026-07-12
+# Handoff — Feature "Listings" en el panel web — 2026-07-12 (actualizado 2026-07-13)
+
+**Estado actual: pasos 1-6 de §3 completados.** Migración 0028 aplicada al
+Supabase local, bug de `Date`→string arreglado (commit `f4ddc6f`), 4 archivos
+de test preexistentes rotos reparados (ver detalle abajo), suite completa de
+`apps/web` en verde (55/55) y typecheck raíz + `apps/web` limpios. Falta
+únicamente **§3 paso 7: abrir el PR a `main`**.
+
+Durante la verificación aparecieron 2 clases de problemas no descritos en la
+versión original de este handoff, ya resueltos:
+1. **Tests rotos por la Etapa 1** (`packages/provider-local/src/local.test.ts`,
+   `packages/provider-nhost/src/nhost.test.ts`, `packages/provider-supabase/src/supabase.test.ts`):
+   el fixture de listing no tenía `fechaFinSubasta`, campo que la Etapa 1 hizo
+   obligatorio — rompía `tsc --noEmit` en los 3 providers. Se agregó el campo.
+2. **Condiciones de carrera en `apps/web/e2e/listings.spec.ts`** (bug de test,
+   no de producto): la fila placeholder "Cargando…" de `Tabla.tsx` también
+   matchea `table tbody tr`, así que esperar "alguna fila visible" podía
+   capturar el estado de carga antes de que llegaran los datos reales. Y
+   `getByText(...)` sin escopar era ambiguo porque la tabla desktop y las
+   tarjetas mobile coexisten en el DOM (CSS decide cuál se ve). Ambos
+   arreglados escopando a `listings-desktop-tabla` / filtrando por texto.
+
+Ver el commit `f4ddc6f` para el detalle completo.
 
 Documento de traspaso para continuar en una sesión nueva. Rama:
 **`feat/listings-panel-web`** (ya tiene 1 commit + trabajo sin commitear, ver §4).
