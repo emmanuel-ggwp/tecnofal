@@ -237,6 +237,10 @@ export interface PanelProps {
   textoCompleto: string;
   precioInicial: number | null;
   envioInicial: number;
+  vendedor: string | null;
+  vendedorPctPositivo: number | null;
+  vendedorTotalVentas: number | null;
+  cantidadOfertas: number | null;
   catalogo: Catalogo;
   /** estado guardado antes de abrir esta página (null = primera vez) */
   estadoPrevio: string | null;
@@ -271,8 +275,8 @@ export function Panel(p: PanelProps) {
   // corrección manual del modelo (buscador): manda sobre la detección automática
   const [modeloOverride, setModeloOverride] = useState<ModeloInfo | null>(null);
   const specs = useMemo(
-    () => parseListing(p.textoCompleto, catalogo.modelos, p.titulo, modeloOverride),
-    [p.textoCompleto, p.titulo, catalogo.modelos, modeloOverride],
+    () => parseListing(p.textoCompleto, catalogo.modelos, p.titulo, modeloOverride, p.vendedor, catalogo.vendedoresConocidos),
+    [p.textoCompleto, p.titulo, catalogo.modelos, modeloOverride, p.vendedor, catalogo.vendedoresConocidos],
   );
 
   const [abierto, setAbierto] = useState(true);
@@ -489,6 +493,11 @@ export function Panel(p: PanelProps) {
     // sin esto, cualquier acción del panel (guardar/comprar/descartar) borraría a null el
     // countdown ya capturado por marcarVisto() al abrir la página — nunca se re-captura aquí.
     fechaFinSubasta: p.guardado?.fechaFinSubasta ?? null,
+    // estos sí se re-capturan en cada acción: listing.tsx siempre re-scrapea al abrir la página
+    vendedor: p.vendedor,
+    vendedorPctPositivo: p.vendedorPctPositivo,
+    vendedorTotalVentas: p.vendedorTotalVentas,
+    cantidadOfertas: p.cantidadOfertas,
   });
 
   const accion = async (fn: () => Promise<unknown>, ok: string, alOk?: () => void) => {
@@ -765,6 +774,24 @@ export function Panel(p: PanelProps) {
           </span>
         )}
       </div>
+      {(p.vendedor || p.cantidadOfertas != null) && (
+        <div style={{ color: '#374151', marginBottom: 4 }}>
+          {p.vendedor && (
+            <>Vendedor: <b>{p.vendedor}</b>{' '}
+              {p.vendedorPctPositivo != null && (
+                <span style={{ color: '#6b7280' }}>
+                  · {p.vendedorPctPositivo}% positivo{p.vendedorTotalVentas != null ? ` (${p.vendedorTotalVentas})` : ''}
+                </span>
+              )}
+            </>
+          )}
+          {p.cantidadOfertas != null && (
+            <span style={{ marginLeft: p.vendedor ? 8 : 0, color: '#6b7280' }}>
+              · {p.cantidadOfertas} oferta{p.cantidadOfertas === 1 ? '' : 's'}
+            </span>
+          )}
+        </div>
+      )}
       {marcando && specs.modeloDetectado && (
         <div style={{ background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 8, padding: 8, marginBottom: 6 }}>
           <div style={css.fila}>

@@ -108,9 +108,21 @@ export class ProveedorSupabase implements Proveedor {
           }
         }
       } catch { /* sin 0007 aún */ }
+      let vendedoresConocidos: string[] = [];
+      try {
+        const { data, error } = await this.sb.from('lotes').select('vendedor');
+        if (!error) {
+          vendedoresConocidos = [...new Set(
+            (data ?? [])
+              .map((r) => (r.vendedor as string | null)?.trim().toLowerCase())
+              .filter((v): v is string => !!v),
+          )];
+        }
+      } catch { /* known-sellers es auxiliar: nunca debe tumbar el catálogo completo */ }
       return {
         parametros,
         tiposAviso,
+        vendedoresConocidos,
         precios: (precios.data ?? []).map((r): PrecioIdeal => ({
           cpuTipo: r.cpu_tipo, genDesde: r.gen_desde, genHasta: r.gen_hasta, precioBase: Number(r.precio_base),
         })),

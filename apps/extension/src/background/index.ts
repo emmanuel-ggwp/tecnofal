@@ -82,7 +82,7 @@ async function reevaluarPorModelos(nombres: string[]): Promise<number> {
     const titulo = f.datos.titulo ?? '';
     if (!nombres.some((m) => m && titulo.toLowerCase().includes(m.toLowerCase()))) continue;
     if (f.datos.precioVisto == null) continue;
-    const ev = evaluarListado(titulo, f.datos.precioVisto, 0, cat);
+    const ev = evaluarListado(titulo, f.datos.precioVisto, 0, cat, undefined, f.datos.vendedor);
     await local.guardarListing({
       ...f.datos,
       semaforo: ev.resultado.semaforo,

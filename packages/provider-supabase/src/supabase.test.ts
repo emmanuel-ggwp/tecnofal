@@ -82,6 +82,19 @@ describe('provider-supabase: catálogo (alimenta el pull que REEMPLAZA config lo
     expect(c?.parametros.impuestoEbay).toBe(1.07); // default cuando el remoto no lo trae
     expect(c?.modelos[0]?.cpuGen).toBe(8);
   });
+
+  it('vendedoresConocidos normaliza (trim+lowercase) y deduplica desde lotes.vendedor', async () => {
+    cola.lotes = [{ data: [{ vendedor: 'Sam-74545 ' }, { vendedor: 'sam-74545' }, { vendedor: null }] }];
+    const c = await p.cargarCatalogo();
+    expect(c?.vendedoresConocidos).toEqual(['sam-74545']);
+  });
+
+  it('vendedoresConocidos: error en la query auxiliar no tumba el catálogo (queda [])', async () => {
+    cola.lotes = [{ error: { message: 'boom' } }];
+    const c = await p.cargarCatalogo();
+    expect(c).not.toBeNull();
+    expect(c?.vendedoresConocidos).toEqual([]);
+  });
 });
 
 describe('provider-supabase: escrituras en la nube', () => {

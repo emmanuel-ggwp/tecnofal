@@ -41,6 +41,25 @@ function fechaFinDePagina(): Date | null {
   return parsearTiempoRestante(txt);
 }
 
+/** Cantidad de ofertas (bids) de la subasta. null = Buy It Now (sin subasta) o no capturado. */
+function cantidadOfertasDePagina(): number | null {
+  const m = texto('[data-testid="x-bid-count"], .x-bid-count').match(/(\d+)\s*bids?/i);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+/** Tarjeta del vendedor: username + % feedback positivo + total de feedback/ventas. */
+function vendedorDePagina(): { vendedor: string | null; vendedorPctPositivo: number | null; vendedorTotalVentas: number | null } {
+  const vendedor = texto('.x-sellercard-atf__about-seller-item--seller-name') || null;
+  const totalTxt = texto('[data-testid="x-sellercard-atf__about-seller"]');
+  const total = totalTxt ? parseInt(totalTxt.replace(/[^\d]/g, ''), 10) : NaN;
+  let vendedorPctPositivo: number | null = null;
+  for (const el of document.querySelectorAll('[data-testid="x-sellercard-atf__data-item"]')) {
+    const m = el.textContent?.match(/(\d+(?:\.\d+)?)\s*%\s*positive/i);
+    if (m) { vendedorPctPositivo = parseFloat(m[1]); break; }
+  }
+  return { vendedor, vendedorPctPositivo, vendedorTotalVentas: Number.isNaN(total) ? null : total };
+}
+
 function extraerPagina() {
   const itemId = location.pathname.match(/\/itm\/(\d+)/)?.[1] ?? location.href.match(/itm\/(\d+)/)?.[1] ?? null;
   const titulo =
@@ -59,7 +78,17 @@ function extraerPagina() {
     .filter(Boolean)
     .join(' · ');
 
-  return { itemId, titulo, precio, envio, textoCompleto: `${titulo} · ${specifics}` };
+  // Condición / "Notas del vendedor": frases tipo "SSD slot is broken" viven aquí, no en el título
+  const condicion = texto('.x-item-condition-text') || texto('[data-testid="x-item-condition"]');
+
+  const { vendedor, vendedorPctPositivo, vendedorTotalVentas } = vendedorDePagina();
+  const cantidadOfertas = cantidadOfertasDePagina();
+
+  return {
+    itemId, titulo, precio, envio,
+    textoCompleto: [titulo, condicion, specifics].filter(Boolean).join(' · '),
+    vendedor, vendedorPctPositivo, vendedorTotalVentas, cantidadOfertas,
+  };
 }
 
 // §16/§25: abrir el listing lo registra como 'visto' (si no estaba ya guardado),
@@ -67,7 +96,9 @@ function extraerPagina() {
 async function marcarVisto(pagina: ReturnType<typeof extraerPagina>, catalogo: Catalogo) {
   if (!pagina.itemId || !pagina.titulo) return;
   try {
-    const ev = pagina.precio != null ? evaluarListado(pagina.titulo, pagina.precio, pagina.envio, catalogo) : null;
+    const ev = pagina.precio != null
+      ? evaluarListado(pagina.titulo, pagina.precio, pagina.envio, catalogo, undefined, pagina.vendedor)
+      : null;
     const listing: ListingGuardar = {
       ebayItemId: pagina.itemId,
       url: location.href.split('?')[0],
@@ -83,6 +114,10 @@ async function marcarVisto(pagina: ReturnType<typeof extraerPagina>, catalogo: C
       evaluacionManual: null,
       estado: 'visto',
       fechaFinSubasta: fechaFinDePagina(),
+      vendedor: pagina.vendedor,
+      vendedorPctPositivo: pagina.vendedorPctPositivo,
+      vendedorTotalVentas: pagina.vendedorTotalVentas,
+      cantidadOfertas: pagina.cantidadOfertas,
     };
     await enviar({ tipo: 'listings:guardar', listing });
   } catch { /* modo degradado: sin registro de vistos */ }
@@ -142,6 +177,10 @@ async function main() {
       textoCompleto={pagina.textoCompleto}
       precioInicial={pagina.precio}
       envioInicial={pagina.envio}
+      vendedor={pagina.vendedor}
+      vendedorPctPositivo={pagina.vendedorPctPositivo}
+      vendedorTotalVentas={pagina.vendedorTotalVentas}
+      cantidadOfertas={pagina.cantidadOfertas}
       catalogo={catalogo}
       estadoPrevio={previo?.estado ?? null}
       motivoDescartePrevio={previo?.motivoDescarte ?? null}

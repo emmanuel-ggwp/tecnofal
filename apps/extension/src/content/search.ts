@@ -55,6 +55,36 @@ interface Item {
   itemId: string | null;
   /** texto crudo del countdown de la grilla ("Quedan 13m") — null si no hay o no es subasta */
   tiempoRestanteTexto: string | null;
+  vendedor: string | null;
+  vendedorPctPositivo: number | null;
+  vendedorTotalVentas: number | null;
+  /** cantidad de ofertas (bids). null = Buy It Now (sin subasta) o no capturado. */
+  cantidadOfertas: number | null;
+}
+
+/** Tarjeta del vendedor: SOLO vive en .su-card-container__attributes__secondary — la tarjeta
+ *  tiene VARIAS .s-card__attribute-row (precio, ofertas+tiempo, "or Best Offer", envío,
+ *  ubicación) en __primary, así que hay que acotar o se agarra la fila equivocada (el precio). */
+function vendedorDeCard(el: Element): { vendedor: string | null; vendedorPctPositivo: number | null; vendedorTotalVentas: number | null } {
+  const fila = el.querySelector('.su-card-container__attributes__secondary .s-card__attribute-row');
+  const spans = fila ? [...fila.querySelectorAll('span')] : [];
+  // cubre tanto "100% positive (9)" como "0% positive (0)" — mismo patrón, sin caso especial
+  const m = spans[1]?.textContent?.match(/(\d+(?:\.\d+)?)\s*%\s*positive\s*\((\d+)\)/i);
+  return {
+    vendedor: spans[0]?.textContent?.trim() || null,
+    vendedorPctPositivo: m ? parseFloat(m[1]) : null,
+    vendedorTotalVentas: m ? parseInt(m[2], 10) : null,
+  };
+}
+
+/** Escanea toda la tarjeta por texto "N bid(s)" en vez de depender de una clase (genérica,
+ *  compartida con "or Best Offer"/envío/ubicación) — Buy It Now sin ofertas degrada a null. */
+function cantidadOfertasDeCard(el: Element): number | null {
+  for (const span of el.querySelectorAll('span')) {
+    const m = span.textContent?.trim().match(/^(\d+)\s+bids?$/i);
+    if (m) return parseInt(m[1], 10);
+  }
+  return null;
 }
 
 function extraerItem(el: Element): Item | null {
@@ -70,10 +100,16 @@ function extraerItem(el: Element): Item | null {
     .filter(Boolean)
     .join(' · ');
   const tiempoRestanteTexto = el.querySelector('.s-card__time-left, .s-item__time-left')?.textContent?.trim() ?? null;
-  return { el, tituloEl, titulo, subtitulo, precio, envio, itemId, tiempoRestanteTexto };
+  const { vendedor, vendedorPctPositivo, vendedorTotalVentas } = vendedorDeCard(el);
+  const cantidadOfertas = cantidadOfertasDeCard(el);
+  return { el, tituloEl, titulo, subtitulo, precio, envio, itemId, tiempoRestanteTexto, vendedor, vendedorPctPositivo, vendedorTotalVentas, cantidadOfertas };
 }
 
-function tooltipDe(badge: Badge, provisional: boolean, bloqueos: string[] = [], alertas: string[] = []): string {
+function tooltipDe(
+  badge: Badge, provisional: boolean, bloqueos: string[] = [], alertas: string[] = [],
+  vendedor?: { nombre: string | null; pctPositivo: number | null; totalVentas: number | null } | null,
+  cantidadOfertas?: number | null,
+): string {
   const lineas: string[] = [];
   if (badge.margen == null) {
     lineas.push('TecnoFal: sin datos suficientes');
@@ -87,6 +123,12 @@ function tooltipDe(badge: Badge, provisional: boolean, bloqueos: string[] = [], 
   }
   lineas.push(...bloqueos.map((b) => `⛔ ${b}`));
   lineas.push(...alertas.slice(0, 3).map((a) => (a.startsWith('⚠') ? a : `⚠ ${a}`)));
+  if (vendedor?.nombre) {
+    const p = vendedor.pctPositivo != null ? `${vendedor.pctPositivo}%` : '?';
+    const tot = vendedor.totalVentas != null ? ` (${vendedor.totalVentas})` : '';
+    lineas.push(`Vendedor: ${vendedor.nombre} · ${p} positivo${tot}`);
+  }
+  if (cantidadOfertas != null) lineas.push(`Ofertas: ${cantidadOfertas}`);
   return lineas.join('\n');
 }
 
@@ -149,7 +191,11 @@ function renderBadge(
   const badgeTooltip: Badge = confirmadoPorVisto
     ? { ...badge, margen: visto!.margen, ganancia: visto!.ganancia, costo: visto!.costo }
     : badge;
-  let tooltip = tooltipDe(badgeTooltip, provisional, bloqueos, alertas);
+  let tooltip = tooltipDe(
+    badgeTooltip, provisional, bloqueos, alertas,
+    { nombre: item.vendedor, pctPositivo: item.vendedorPctPositivo, totalVentas: item.vendedorTotalVentas },
+    item.cantidadOfertas,
+  );
   if (visto) tooltip += `\n👁 Ya visto (${visto.estado})`;
   el.title = tooltip;
 }
@@ -169,7 +215,7 @@ function evaluarYPintar(item: Item, catalogo: Catalogo, vistos: Map<string, Esta
   }
   // el subtítulo (condición: "Para repuestos solamente"…) también alimenta el parser
   const textoEval = item.subtitulo ? `${item.titulo} · ${item.subtitulo}` : item.titulo;
-  const { resultado, specs } = evaluarListado(textoEval, item.precio, item.envio, catalogo);
+  const { resultado, specs } = evaluarListado(textoEval, item.precio, item.envio, catalogo, undefined, item.vendedor);
   const badge = badgeDeResultado(resultado, specs, catalogo.parametros);
   renderBadge(
     item, badge, visto,

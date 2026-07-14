@@ -114,6 +114,34 @@ describe('parser §5.1', () => {
     expect(dosEnUno.alertas.some((a) => a.includes('soldada'))).toBe(true);
   });
 
+  it('slot/puerto de disco dañado bloquea; el disco dañado o ausente NO bloquea', () => {
+    expect(parseListing('Dell Latitude 7490 i5-8350U 8GB · SSD slot is broken', []).bloqueos.some((b) => b.includes('Slot/puerto'))).toBe(true);
+    expect(parseListing('Lenovo ThinkPad T480 i5 8GB M.2 slot damaged', []).bloqueos.length).toBe(1);
+    expect(parseListing('HP EliteBook 840 G5 broken SSD slot', []).bloqueos.length).toBe(1);
+    expect(parseListing('Dell E7450 i5 hard drive connector broken', []).bloqueos.length).toBe(1);
+    // eBay LATAM traduce el listado al español
+    expect(parseListing('Dell 5490 i5 · Notas del vendedor: la ranura del SSD está rota', []).bloqueos.length).toBe(1);
+    // el disco dañado/ausente se reemplaza (faltante) — solo el slot/puerto/conector es placa dañada
+    expect(parseListing('Dell Latitude 5490 i5 8GB No SSD cracked screen', []).bloqueos).toEqual([]);
+    expect(parseListing('Lenovo T470 i5 bad hard drive, boots to bios', []).bloqueos).toEqual([]);
+    expect(parseListing('Dell 7490 dual M.2 slots 512GB SSD', []).bloqueos).toEqual([]);
+    expect(parseListing('Lenovo T450 damaged hard drive bay cover', []).bloqueos).toEqual([]);
+  });
+
+  it('vendedor nunca visto en el historial → alerta no bloqueante; sin datos → sin alerta', () => {
+    const base = 'Dell Latitude 7490 i5-8350U 16GB RAM 512GB SSD';
+    expect(parseListing(base, [], undefined, undefined, 'nuevo-vendedor', ['sam-74545']).alertas.some((a) => a.includes('Vendedor nuevo'))).toBe(true);
+    // normaliza trim+lowercase en ambos lados
+    expect(parseListing(base, [], undefined, undefined, 'Sam-74545 ', ['sam-74545']).alertas.some((a) => a.includes('Vendedor nuevo'))).toBe(false);
+    // vendedoresConocidos vacío o ausente (sin sesión / primera compra) ⇒ nunca alerta
+    expect(parseListing(base, [], undefined, undefined, 'cualquiera', []).alertas.some((a) => a.includes('Vendedor nuevo'))).toBe(false);
+    expect(parseListing(base, [], undefined, undefined, 'cualquiera', undefined).alertas.some((a) => a.includes('Vendedor nuevo'))).toBe(false);
+    // sin vendedor scrapeado ⇒ sin alerta aunque haya catálogo
+    expect(parseListing(base, [], undefined, undefined, undefined, ['sam-74545']).alertas.some((a) => a.includes('Vendedor nuevo'))).toBe(false);
+    // no bloquea nunca, sea cual sea el vendedor
+    expect(parseListing(base, [], undefined, undefined, 'nuevo-vendedor', ['sam-74545']).bloqueos).toEqual([]);
+  });
+
   it('b) "No OS/No Batt/No HDD/No Power Cord" NUNCA bloquean — alimentan extras', () => {
     const s = parseListing('Lenovo ThinkPad T450 i5-5300U 8GB RAM No OS No Batt No HDD No Power Cord', []);
     expect(s.bloqueos).toEqual([]);

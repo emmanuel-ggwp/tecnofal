@@ -229,6 +229,7 @@ export class ProveedorLocal implements DataProvider {
       avisosPor.set(a.modeloId, lista);
     }
     const tipos = await this.db.tiposAviso.toArray();
+    const vendedoresMeta = await this.db.meta.get('vendedoresConocidos');
     const kv = Object.fromEntries(params.map((p) => [p.clave, p.valor]));
     const parametros = Object.fromEntries(
       (Object.keys(CLAVES_PARAM) as (keyof Parametros)[]).map((k) => [k, kv[CLAVES_PARAM[k]] ?? PARAMETROS_DEFAULT[k]]),
@@ -239,6 +240,7 @@ export class ProveedorLocal implements DataProvider {
       ajustes: Object.fromEntries(ajustes.map((a) => [a.clave, a.delta])),
       modelos: modelos.map((m) => ({ ...m, avisos: avisosPor.get(m.id) ?? [] })),
       tiposAviso: tipos.map((t) => ({ clave: t.clave, nombre: t.nombre })),
+      vendedoresConocidos: (vendedoresMeta?.v as string[] | undefined) ?? [],
       partesRef: Object.fromEntries(partes.map((p) => [p.nombre, p.precioReferencia])),
       detalles: detalles.map((d) => ({ id: d.nombre, nombre: d.nombre, deduccionBase: d.deduccionBase, categoria: d.categoria ?? 'Otro' })),
       online: true, // local ES la fuente (§22); el estado del espejo se ve en el popup
@@ -471,5 +473,9 @@ export class ProveedorLocal implements DataProvider {
         await this.db.modelos.bulkPut(cat.modelos.map((m) => ({ ...m, id: `${m.marca}|${m.modelo}` })));
       }
     });
+    // vendedoresConocidos: igual criterio "vacío = espejo sin sembrar, no borrar lo local"
+    if (cat.vendedoresConocidos && cat.vendedoresConocidos.length > 0) {
+      await this.db.meta.put({ k: 'vendedoresConocidos', v: cat.vendedoresConocidos });
+    }
   }
 }

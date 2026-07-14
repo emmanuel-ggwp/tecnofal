@@ -24,6 +24,13 @@ describe('provider-local (§22)', () => {
     expect(c.parametros.envioVzlaPorLaptop).toBe(12);
   });
 
+  it('aplicarConfigRemota persiste vendedoresConocidos (meta); cargarCatalogo lo devuelve', async () => {
+    const antes = await p.cargarCatalogo();
+    expect(antes.vendedoresConocidos).toEqual([]);
+    await p.aplicarConfigRemota({ ...antes, vendedoresConocidos: ['sam-74545', 'otro'] });
+    expect((await p.cargarCatalogo()).vendedoresConocidos).toEqual(['sam-74545', 'otro']);
+  });
+
   it('guardar listing → dirty + manual; check lo encuentra', async () => {
     await p.guardarListing(listing('111'));
     const vistos = await p.checkListings(['111', '222']);

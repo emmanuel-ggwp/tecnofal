@@ -4,6 +4,19 @@ const spec = <T>(valor: T | null, confianza: Confianza): Spec<T> => ({ valor, co
 
 const norm = (s: string) => s.toLowerCase().replace(/[\s\-_/]+/g, ' ').trim();
 
+// Slot/bahía/puerto/conector de disco dañado = placa dañada (no se arregla barato) → bloquea.
+// El disco en sí dañado o ausente NO bloquea: se reemplaza, igual que "No SSD/No HDD" (alimenta faltantes).
+// La ventana entre slot y daño no cruza , . ; · ( ) para no mezclar frases/campos del listado.
+const SLOT_DISCO = String.raw`\b(?:ssd|hdd|m\.?2|nvme|sata|hard\s*(?:drive|disk)|storage)[\s()/-]{0,3}(?:slots?|bays?|cadd(?:y|ies)|connectors?|ports?|trays?)\b(?!\s*(?:covers?|doors?|lids?|screws?))`;
+const DANO_SLOT_DISCO: RegExp[] = [
+  // "SSD slot is broken", "M.2 slot damaged", "hard drive connector not working"
+  new RegExp(SLOT_DISCO + String.raw`[^.,;:·|()!]{0,25}\b(?:broken|damaged?|crack(?:ed)?|faulty|defective|bad|dead|inoperable|non[- ]?working|not\s+working|do(?:es)?\s*n[o']?t\s+work|won'?t\s+work)`, 'i'),
+  // "broken SSD slot", "damage to the M.2 port", "bad hdd caddy"
+  new RegExp(String.raw`\b(?:broken|damaged?|crack(?:ed)?|faulty|defective|bad|dead)\s+(?:(?:to|on|in|the|a)\s+){0,2}` + SLOT_DISCO, 'i'),
+  // locale español (eBay LATAM traduce los listados): "la ranura del SSD está rota/dañada"
+  /(?<!(?:tapas?|cubiertas?)\s+de\s+(?:la|el)\s+)\b(?:ranuras?|puertos?|conectore?s?|bah[ií]as?|slots?)\s+(?:(?:de|del|para|el|la)\s+){0,2}(?:ssd|hdd|m\.?2|nvme|discos?(?:\s+duros?)?(?!\s+[óo]ptic)|almacenamiento)\b[^.,;:·|()!]{0,25}\b(?:rot[oa]s?|dañad[oa]s?|quebrad[oa]s?|partid[oa]s?|mal[oa]s?|muert[oa]s?|no\s+funcionan?|no\s+sirven?)/i,
+];
+
 /** Peor primero: bloqueada > RAM soldada total > condicional > revisar/parcial > normal; empate → gen más vieja */
 const rangoPeor = (m: ModeloInfo): number =>
   m.reglaCompra === 'bloqueada' ? 0
@@ -17,6 +30,8 @@ export function parseListing(
   modelos: ModeloInfo[] = [],
   textoDanos?: string,
   modeloForzado?: ModeloInfo | null,
+  vendedor?: string | null,
+  vendedoresConocidos?: string[],
 ): SpecsParseadas {
   const t = texto;
   const td = textoDanos ?? texto;
@@ -116,6 +131,7 @@ export function parseListing(
     alertas.push('⚠ "For parts / as-is": confirmar que enciende antes de pujar');
   }
   if (/\buntested\b/i.test(t)) alertas.push('⚠ "Untested": revisar/preguntar al vendedor antes de pujar');
+  if (DANO_SLOT_DISCO.some((re) => re.test(t))) bloqueos.push('Slot/puerto de disco dañado ("SSD slot broken")');
   if (/\b(celeron|pentium|athlon)\b/i.test(t)) bloqueos.push('CPU Celeron/Pentium/Athlon');
   if (/chromebook/i.test(t)) bloqueos.push('Chromebook');
   if (/1366\s*x\s*768|\bTN\s+panel\b/i.test(t)) alertas.push('Pantalla 1366×768 TN — condicional (decide el precio)');
@@ -193,6 +209,16 @@ export function parseListing(
     }
   }
   if (cpuTipo.valor === 'i3') alertas.push('i3: condicional — el semáforo decide por precio');
+
+  // Vendedor nunca visto en el historial de compras (lotes.vendedor) — NO bloquea.
+  // Sin catálogo de vendedores conocidos (offline / primera compra / sin sesión), se omite:
+  // ausencia de datos no debe leerse como "vendedor nuevo".
+  if (vendedor && vendedoresConocidos && vendedoresConocidos.length > 0) {
+    const vNorm = vendedor.trim().toLowerCase();
+    if (vNorm && !vendedoresConocidos.includes(vNorm)) {
+      alertas.push('⚠ Vendedor nuevo — nunca le has comprado antes');
+    }
+  }
 
   return {
     cpuTipo, cpuGen, ramGb, ssdGb, esHdd,

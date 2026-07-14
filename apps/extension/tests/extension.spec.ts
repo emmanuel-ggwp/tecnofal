@@ -39,7 +39,15 @@ async function extensionId(): Promise<string> {
   return worker.url().split('/')[2];
 }
 
-async function obtenerListing(itemId: string): Promise<{ fechaFinSubasta: string | null } | null> {
+interface ListingObtenido {
+  fechaFinSubasta: string | null;
+  vendedor: string | null;
+  vendedorPctPositivo: number | null;
+  vendedorTotalVentas: number | null;
+  cantidadOfertas: number | null;
+}
+
+async function obtenerListing(itemId: string): Promise<ListingObtenido | null> {
   const id = await extensionId();
   const page = await context.newPage();
   await page.goto(`chrome-extension://${id}/src/popup/index.html`);
@@ -48,7 +56,7 @@ async function obtenerListing(itemId: string): Promise<{ fechaFinSubasta: string
     itemId,
   );
   await page.close();
-  return listing as { fechaFinSubasta: string | null } | null;
+  return listing as ListingObtenido | null;
 }
 
 test('búsqueda: aparecen badges de semáforo en los resultados', async () => {
@@ -124,4 +132,39 @@ test('búsqueda: countdown divergente ("Quedan 2h 15m") actualiza el fechaFinSub
   const finDespues = new Date(despues!.fechaFinSubasta as string).getTime();
   // saltó de ~12min a ~2h15m: la diferencia debe ser de más de 1h
   expect(finDespues - finAntes).toBeGreaterThan(60 * 60_000);
+});
+
+test('búsqueda: el tooltip del badge incluye vendedor y cantidad de ofertas (layout .s-card)', async () => {
+  const page = await context.newPage();
+  await page.goto('https://www.ebay.com/sch/i.html?_nkw=dell+latitude');
+  await expect(page.locator('.tf-badge').first()).toBeVisible({ timeout: 20_000 });
+  const title = await page.locator('li.s-card .tf-badge').getAttribute('title');
+  expect(title).toContain('sam-74545');
+  expect(title).toContain('100% positivo');
+  expect(title).toContain('Ofertas: 33');
+  await page.close();
+});
+
+test('listing: vendedor y cantidad de ofertas se scrapean y persisten', async () => {
+  const page = await context.newPage();
+  await page.goto('https://www.ebay.com/itm/777777777777');
+  await expect(page.locator('#tecnofal-panel-host')).toBeAttached({ timeout: 20_000 });
+  await page.close();
+  await new Promise((r) => setTimeout(r, 500));
+
+  const guardado = await obtenerListing('777777777777');
+  expect(guardado?.vendedor).toBe('sam-74545');
+  expect(guardado?.vendedorPctPositivo).toBe(100);
+  expect(guardado?.vendedorTotalVentas).toBe(4);
+  expect(guardado?.cantidadOfertas).toBe(0);
+});
+
+test('listing: el panel muestra el vendedor', async () => {
+  const page = await context.newPage();
+  await page.goto('https://www.ebay.com/itm/888888888888');
+  const panel = page.locator('#tecnofal-panel-host');
+  await expect(panel).toBeAttached({ timeout: 20_000 });
+  // "sam-74545" también aparece en la página cruda (fixture) fuera del panel — acotar al shadow host
+  await expect(panel.getByText('sam-74545', { exact: false })).toBeVisible();
+  await page.close();
 });
