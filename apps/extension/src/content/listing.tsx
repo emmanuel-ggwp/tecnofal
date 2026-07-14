@@ -10,6 +10,18 @@ function texto(sel: string): string {
   return document.querySelector(sel)?.textContent?.trim() ?? '';
 }
 
+// Descripción del vendedor: vive en un iframe cross-origin (ver src/content/descripcion.ts)
+// que nos la manda por postMessage — no se puede leer con document.querySelector desde acá.
+let descripcionExterna: string | null = null;
+window.addEventListener('message', (ev) => {
+  let host = '';
+  try { host = new URL(ev.origin).hostname; } catch { return; }
+  if (!host.endsWith('.ebaydesc.com')) return;
+  if (ev.data?.tecnofal === true && ev.data.tipo === 'descripcion' && typeof ev.data.texto === 'string') {
+    descripcionExterna = ev.data.texto;
+  }
+});
+
 /** Costo de envío: eBay cambia de layout seguido — se prueban candidatos hasta que uno tenga precio (o diga gratis). */
 function envioDePagina(): number {
   const candidatos: string[] = [
@@ -86,7 +98,7 @@ function extraerPagina() {
 
   return {
     itemId, titulo, precio, envio,
-    textoCompleto: [titulo, condicion, specifics].filter(Boolean).join(' · '),
+    textoCompleto: [titulo, condicion, specifics, descripcionExterna].filter(Boolean).join(' · '),
     vendedor, vendedorPctPositivo, vendedorTotalVentas, cantidadOfertas,
   };
 }
@@ -125,14 +137,19 @@ async function marcarVisto(pagina: ReturnType<typeof extraerPagina>, catalogo: C
 
 type Pagina = ReturnType<typeof extraerPagina> & { itemId: string; titulo: string };
 
-/** eBay a veces hidrata el título/precio tarde (esqueleto de carga): esperar en vez de rendirse */
-async function esperarPagina(maxMs = 15000): Promise<Pagina | null> {
+/** eBay a veces hidrata el título/precio tarde (esqueleto de carga): esperar en vez de rendirse.
+ *  También espera (con un presupuesto más corto) a que el iframe de descripción reporte su
+ *  texto por postMessage — si no llega a tiempo, se sigue igual con lo que haya (mejor
+ *  parcial que bloquear el panel indefinidamente si el iframe no carga o falla el postMessage). */
+async function esperarPagina(maxMs = 15000, maxMsDescripcion = 5000): Promise<Pagina | null> {
   const inicio = Date.now();
   for (;;) {
     const p = extraerPagina();
-    if (p.itemId && p.titulo) return p as Pagina;
     if (!p.itemId) return null; // no es una página /itm/ — no insistir
-    if (Date.now() - inicio > maxMs) return null;
+    const hayIframeDescripcion = !!document.getElementById('desc_ifr');
+    const esperandoDescripcion = hayIframeDescripcion && descripcionExterna == null && Date.now() - inicio < maxMsDescripcion;
+    if (p.itemId && p.titulo && !esperandoDescripcion) return p as Pagina;
+    if (Date.now() - inicio > maxMs) return p.titulo ? (p as Pagina) : null;
     await new Promise((r) => setTimeout(r, 500));
   }
 }

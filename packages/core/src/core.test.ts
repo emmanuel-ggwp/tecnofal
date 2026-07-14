@@ -47,6 +47,23 @@ describe('parser §5.1', () => {
     expect(s.bateriaIncluida.confianza).toBe('no_mencionado');
   });
 
+  it('cargador: cualquier mención real (no solo "charger included") cuenta como incluido', () => {
+    expect(parseListing('Dell Latitude 7490 i5-8350U 8GB · Package List: 1 x Original Power Charger', []).cargadorIncluido.valor).toBe(true);
+    expect(parseListing('Dell Latitude 7490 i5-8350U 8GB · Charger: Genuine Dell 65W', []).cargadorIncluido.valor).toBe(true);
+    expect(parseListing('Dell Latitude 7490 i5-8350U 8GB · Included Items · AC Adapter', []).cargadorIncluido.valor).toBe(true);
+    // negación explícita sigue ganando
+    expect(parseListing('Dell Latitude 7490 i5-8350U 8GB · Charger not included, sold as-is', []).cargadorIncluido.valor).toBe(false);
+    expect(parseListing('Dell Latitude 7490 i5-8350U 8GB · Comes without the original charger', []).cargadorIncluido.valor).toBe(false);
+    // un "no" de otro contexto, lejos y separado por puntuación, NO debe leerse como "sin cargador"
+    const lejos = parseListing(
+      'Dell Latitude 7490 i5-8350U 8GB. No scratches on the case. Great battery life. '
+      + 'Screen is perfect, no dead pixels. Keyboard works great, no sticky keys. '
+      + 'Package List: 1 x Power Adapter included.',
+      [],
+    );
+    expect(lejos.cargadorIncluido.valor).toBe(true);
+  });
+
   it('CPU asumida por modelo cuando el título no la menciona (referencia Dell)', () => {
     const mods: ModeloInfo[] = [{ marca: 'Dell', modelo: 'Latitude 5480', cpuTipo: 'i5', cpuGen: 7, ramSoldada: 'no', reglaCompra: 'normal' }];
     const s = parseListing('Dell Latitude 5480 8GB RAM 256GB SSD', mods);

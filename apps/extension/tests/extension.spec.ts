@@ -25,6 +25,10 @@ test.beforeAll(async () => {
     if (url.includes('/itm/')) return route.fulfill({ contentType: 'text/html', body: fixture('listing.html') });
     return route.fulfill({ status: 204, body: '' });
   });
+  // Descripción del vendedor: iframe cross-origin (itm.ebaydesc.com) — ver src/content/descripcion.ts
+  await context.route('https://itm.ebaydesc.com/**', async (route) => (
+    route.fulfill({ contentType: 'text/html', body: fixture('descripcion.html') })
+  ));
 });
 
 test.afterAll(async () => {
@@ -157,6 +161,18 @@ test('listing: vendedor y cantidad de ofertas se scrapean y persisten', async ()
   expect(guardado?.vendedorPctPositivo).toBe(100);
   expect(guardado?.vendedorTotalVentas).toBe(4);
   expect(guardado?.cantidadOfertas).toBe(0);
+});
+
+test('listing: la descripción del iframe cross-origin (ebaydesc.com) alimenta "cargador incluido"', async () => {
+  // El título/specifics del fixture NO mencionan cargador — solo aparece en descripcion.html,
+  // servida por el iframe #desc_ifr (ver src/content/descripcion.ts + listing.tsx). Si el
+  // content script no la capturara, "Cargador" quedaría marcado como faltante (checked).
+  const page = await context.newPage();
+  await page.goto('https://www.ebay.com/itm/333333333333');
+  await expect(page.locator('#tecnofal-panel-host')).toBeAttached({ timeout: 20_000 });
+  const panel = page.locator('#tecnofal-panel-host');
+  await expect(panel.getByLabel('Cargador', { exact: false })).not.toBeChecked();
+  await page.close();
 });
 
 test('listing: el panel muestra el vendedor', async () => {

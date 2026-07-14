@@ -17,6 +17,21 @@ const DANO_SLOT_DISCO: RegExp[] = [
   /(?<!(?:tapas?|cubiertas?)\s+de\s+(?:la|el)\s+)\b(?:ranuras?|puertos?|conectore?s?|bah[ií]as?|slots?)\s+(?:(?:de|del|para|el|la)\s+){0,2}(?:ssd|hdd|m\.?2|nvme|discos?(?:\s+duros?)?(?!\s+[óo]ptic)|almacenamiento)\b[^.,;:·|()!]{0,25}\b(?:rot[oa]s?|dañad[oa]s?|quebrad[oa]s?|partid[oa]s?|mal[oa]s?|muert[oa]s?|no\s+funcionan?|no\s+sirven?)/i,
 ];
 
+// §5.1 cargador: en texto real (packing list de la descripción, item specifics) casi nunca
+// aparece "charger included" tal cual — lo común es "1x Original Power Charger", "Charger:
+// Genuine Dell 65W", "AC Adapter" como línea de contenido de la caja. Mencionar el cargador/
+// adaptador casi siempre implica que se incluye; cuando falta, el vendedor SIEMPRE lo dice con
+// una negación explícita — por eso se prioriza detectar esa negación primero, y cualquier otra
+// mención se toma como confirmación (en vez de exigir la frase exacta "charger included").
+const CARGADOR_KW = String.raw`(?:charger|adapter|ac\s*adapter|power\s*(?:cord|supply|adapter|brick)|ac\s+cord|cargador(?:es)?|adaptador(?:es)?)s?`;
+const SIN_CARGADOR: RegExp[] = [
+  new RegExp(String.raw`\bno\s+` + CARGADOR_KW + String.raw`\b`, 'i'),
+  new RegExp(CARGADOR_KW + String.raw`\b[^.,;:·|()!]{0,20}\b(?:not\s+included|not\s+provided|missing|excluded|sold\s+separately)\b`, 'i'),
+  new RegExp(String.raw`\bwithout\b[^.,;:·|()!]{0,20}\b(?:charger|adapter)\b`, 'i'),
+  new RegExp(String.raw`\bsin\b[^.,;:·|()!]{0,20}` + CARGADOR_KW, 'i'),
+];
+const CON_CARGADOR = new RegExp(String.raw`\b` + CARGADOR_KW + String.raw`\b`, 'i');
+
 /** Peor primero: bloqueada > RAM soldada total > condicional > revisar/parcial > normal; empate → gen más vieja */
 const rangoPeor = (m: ModeloInfo): number =>
   m.reglaCompra === 'bloqueada' ? 0
@@ -107,8 +122,8 @@ export function parseListing(
   else if (/touch\s*(?:screen)?/i.test(t)) pantallaTactil = spec(true, 'confirmado');
 
   let cargadorIncluido = spec<boolean>(null, 'no_mencionado');
-  if (/no\s+(?:charger|adapter|ac\s*adapter|power\s*(?:cord|supply|adapter|brick)|ac\s+cord)/i.test(t)) cargadorIncluido = spec(false, 'confirmado');
-  else if (/(?:charger|adapter)\s+(?:included|incl)/i.test(t) || /with\s+charger/i.test(t)) cargadorIncluido = spec(true, 'confirmado');
+  if (SIN_CARGADOR.some((re) => re.test(t))) cargadorIncluido = spec(false, 'confirmado');
+  else if (CON_CARGADOR.test(t)) cargadorIncluido = spec(true, 'confirmado');
 
   let bateriaIncluida = spec<boolean>(null, 'no_mencionado');
   if (/no\s+batt(?:ery)?\b|battery\s+(?:not\s+included|missing|removed|dead|bad)/i.test(t)) bateriaIncluida = spec(false, 'confirmado');
