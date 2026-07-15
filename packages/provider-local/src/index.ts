@@ -54,6 +54,7 @@ interface FilaAjuste { clave: string; delta: number; nota: string | null }
 interface FilaDetalle { nombre: string; deduccionBase: number; categoria?: string }
 interface FilaParteRef { nombre: string; precioReferencia: number; valorNominal: number | null }
 interface FilaMeta { k: string; v: unknown }
+interface FilaVendedorBateria { nombre: string; dirty: number }
 
 /** chrome.runtime.sendMessage serializa `Date` a string ISO — cualquier valor que haya
  *  cruzado un mensaje content↔background puede llegar aquí como string aunque el tipo diga `Date`. */
@@ -85,6 +86,7 @@ const CLAVES_PARAM: Record<keyof Parametros, string> = {
   tarifaBarcoPorPie3: 'tarifa_barco_por_pie3',
   tarifaAvionZoomPorKg: 'tarifa_avion_zoom_por_kg',
   envioVzlaPorLaptop: 'envio_vzla_por_laptop',
+  bateriaPctUmbral: 'bateria_pct_umbral',
 };
 
 class BD extends Dexie {
@@ -99,6 +101,7 @@ class BD extends Dexie {
   modeloAvisos!: Table<FilaAvisoModelo, string>;
   partesRef!: Table<FilaParteRef, string>;
   meta!: Table<FilaMeta, string>;
+  vendedoresBateria!: Table<FilaVendedorBateria, string>;
 
   constructor(nombre = 'tecnofal') {
     super(nombre);
@@ -117,6 +120,10 @@ class BD extends Dexie {
     this.version(2).stores({
       tiposAviso: 'clave, dirty',
       modeloAvisos: 'id, modeloId, dirty',
+    });
+    // vendedores conocidos por indicar el % de batería (global/compartido, ver §23-like)
+    this.version(3).stores({
+      vendedoresBateria: 'nombre, dirty',
     });
   }
 }
@@ -229,6 +236,8 @@ export class ProveedorLocal implements DataProvider {
       avisosPor.set(a.modeloId, lista);
     }
     const tipos = await this.db.tiposAviso.toArray();
+    const vendedoresMeta = await this.db.meta.get('vendedoresConocidos');
+    const vendedoresBateria = await this.db.vendedoresBateria.toArray();
     const kv = Object.fromEntries(params.map((p) => [p.clave, p.valor]));
     const parametros = Object.fromEntries(
       (Object.keys(CLAVES_PARAM) as (keyof Parametros)[]).map((k) => [k, kv[CLAVES_PARAM[k]] ?? PARAMETROS_DEFAULT[k]]),
@@ -239,6 +248,8 @@ export class ProveedorLocal implements DataProvider {
       ajustes: Object.fromEntries(ajustes.map((a) => [a.clave, a.delta])),
       modelos: modelos.map((m) => ({ ...m, avisos: avisosPor.get(m.id) ?? [] })),
       tiposAviso: tipos.map((t) => ({ clave: t.clave, nombre: t.nombre })),
+      vendedoresConocidos: (vendedoresMeta?.v as string[] | undefined) ?? [],
+      vendedoresBateria: vendedoresBateria.map((v) => v.nombre),
       partesRef: Object.fromEntries(partes.map((p) => [p.nombre, p.precioReferencia])),
       detalles: detalles.map((d) => ({ id: d.nombre, nombre: d.nombre, deduccionBase: d.deduccionBase, categoria: d.categoria ?? 'Otro' })),
       online: true, // local ES la fuente (§22); el estado del espejo se ve en el popup
@@ -428,6 +439,17 @@ export class ProveedorLocal implements DataProvider {
   async marcarTipoLimpio(clave: string): Promise<void> { await this.db.tiposAviso.update(clave, { dirty: 0 }); }
   async todosListings(): Promise<FilaListing[]> { return this.db.listings.toArray(); }
 
+  // ---------- vendedores conocidos por indicar el % de batería (global/compartido) ----------
+  async marcarVendedorBateria(vendedor: string): Promise<void> {
+    const nombre = vendedor.trim().toLowerCase();
+    if (!nombre) return;
+    if (!(await this.db.vendedoresBateria.get(nombre))) {
+      await this.db.vendedoresBateria.put({ nombre, dirty: 1 });
+    }
+  }
+  async vendedoresBateriaSucios(): Promise<FilaVendedorBateria[]> { return this.db.vendedoresBateria.where('dirty').equals(1).toArray(); }
+  async marcarVendedorBateriaLimpio(nombre: string): Promise<void> { await this.db.vendedoresBateria.update(nombre, { dirty: 0 }); }
+
   // ---------- Sync (§22) ----------
   async listingsSucios(): Promise<FilaListing[]> { return this.db.listings.where('dirty').equals(1).toArray(); }
   async comprasPendientes(): Promise<FilaCompra[]> { return this.db.compras.where('estado').equals('pendiente').toArray(); }
@@ -471,5 +493,17 @@ export class ProveedorLocal implements DataProvider {
         await this.db.modelos.bulkPut(cat.modelos.map((m) => ({ ...m, id: `${m.marca}|${m.modelo}` })));
       }
     });
+    // vendedoresConocidos: igual criterio "vacío = espejo sin sembrar, no borrar lo local"
+    if (cat.vendedoresConocidos && cat.vendedoresConocidos.length > 0) {
+      await this.db.meta.put({ k: 'vendedoresConocidos', v: cat.vendedoresConocidos });
+    }
+    // vendedoresBateria: merge aditivo — nunca pisa una fila local dirty:1 pendiente de empujar
+    if (cat.vendedoresBateria && cat.vendedoresBateria.length > 0) {
+      for (const nombre of cat.vendedoresBateria) {
+        if (!(await this.db.vendedoresBateria.get(nombre))) {
+          await this.db.vendedoresBateria.put({ nombre, dirty: 0 });
+        }
+      }
+    }
   }
 }

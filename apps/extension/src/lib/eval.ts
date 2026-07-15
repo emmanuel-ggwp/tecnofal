@@ -1,6 +1,6 @@
 import {
-  evaluar, parseListing,
-  type EntradaEvaluacion, type MetodoEnvio, type ResultadoEvaluacion, type SpecsParseadas,
+  avisosDeVendedor, evaluar, parseListing,
+  type AvisoVendedor, type EntradaEvaluacion, type MetodoEnvio, type ResultadoEvaluacion, type SpecsParseadas,
 } from '@tecnofal/core';
 import type { Catalogo } from './mensajes';
 
@@ -78,6 +78,7 @@ export interface EvaluacionRapida {
   specs: SpecsParseadas;
   entrada: EntradaEvaluacion;
   resultado: ResultadoEvaluacion;
+  avisosVendedor: AvisoVendedor[];
 }
 
 /** Evaluación rápida para badges en resultados de búsqueda */
@@ -87,8 +88,16 @@ export function evaluarListado(
   envioUsa: number,
   catalogo: Catalogo,
   metodo: MetodoEnvio = 'barco',
+  vendedor?: string | null,
+  vendedorPctPositivo?: number | null,
+  vendedorTotalVentas?: number | null,
+  cantidadOfertas?: number | null,
 ): EvaluacionRapida {
-  const specs = parseListing(titulo, catalogo.modelos);
+  const specs = parseListing(titulo, catalogo.modelos, undefined, undefined, catalogo.parametros.bateriaPctUmbral);
+  const avisosVendedor = avisosDeVendedor({
+    vendedor, vendedorPctPositivo, vendedorTotalVentas, cantidadOfertas,
+    vendedoresConocidos: catalogo.vendedoresConocidos, vendedoresBateria: catalogo.vendedoresBateria,
+  });
   const n = specs.cantidadLote && specs.cantidadLote > 1 ? specs.cantidadLote : 1;
   const extras = faltantesDe(specs, catalogo, n).reduce((s, f) => s + f.precio * f.cantidad, 0);
   const deducciones = deduccionesSugeridas(specs, catalogo).reduce((s, d) => s + d.monto * d.cantidad, 0);
@@ -103,8 +112,8 @@ export function evaluarListado(
     pesoKg: PESO_LAPTOP_KG,
     cantidadLaptops: n,
     ...specsPesimistas(specs),
-    bloqueado: specs.bloqueos.length > 0,
+    bloqueado: specs.bloqueos.length > 0 || avisosVendedor.some((a) => a.tipo === 'bloquea'),
   };
   const resultado = evaluar(entrada, catalogo.parametros, catalogo.precios, catalogo.ajustes);
-  return { specs, entrada, resultado };
+  return { specs, entrada, resultado, avisosVendedor };
 }

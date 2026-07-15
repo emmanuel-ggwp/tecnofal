@@ -23,3 +23,10 @@ export function parsearPrecio(texto: string | null | undefined): number | null {
   const v = parseFloat(n);
   return Number.isNaN(v) ? null : v;
 }
+
+/** Envío: "Free"/"Gratis" o sin texto → 0; si no, mismo parseo que un precio */
+export function parsearEnvio(texto: string | null | undefined): number {
+  if (!texto) return 0;
+  if (esGratis(texto)) return 0;
+  return parsearPrecio(texto) ?? 0;
+}

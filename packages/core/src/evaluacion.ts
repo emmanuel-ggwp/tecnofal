@@ -19,17 +19,19 @@ export function precioBasePara(
   return null;
 }
 
+export function ajusteRam(ramGb: number | null, aj: AjustesConfig): number {
+  return ramGb != null ? Math.floor(Math.max(ramGb - 8, 0) / 8) * (aj['ram_por_8gb'] ?? 0) : 0;
+}
+
+export function ajusteSsd(ssdGb: number | null, aj: AjustesConfig): number {
+  return ssdGb != null ? Math.floor(Math.max(ssdGb - 256, 0) / 256) * (aj['ssd_por_256gb'] ?? 0) : 0;
+}
+
 export function ajustesPara(
   e: { ramGb: number | null; ssdGb: number | null; pantallaPulgadas: number | null; pantallaTactil: boolean },
   aj: AjustesConfig,
 ): number {
-  let total = 0;
-  if (e.ramGb != null) total += Math.floor(Math.max(e.ramGb - 8, 0) / 8) * (aj['ram_por_8gb'] ?? 0);
-  if (e.ssdGb != null) total += Math.floor(Math.max(e.ssdGb - 256, 0) / 256) * (aj['ssd_por_256gb'] ?? 0);
-  if (e.pantallaPulgadas != null) {
-    if (e.pantallaPulgadas >= 15) total += aj['pantalla_grande'] ?? 0;
-    else if (e.pantallaPulgadas <= 13) total += aj['pantalla_pequena'] ?? 0;
-  }
+  let total = ajusteRam(e.ramGb, aj) + ajusteSsd(e.ssdGb, aj) + ajustePantalla(e.pantallaPulgadas, aj);
   if (e.pantallaTactil) total += aj['pantalla_tactil'] ?? 0;
   return total;
 }

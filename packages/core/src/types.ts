@@ -44,6 +44,8 @@ export interface SpecsParseadas {
   pantallaTactil: Spec<boolean>;
   cargadorIncluido: Spec<boolean>;
   bateriaIncluida: Spec<boolean>;
+  /** % de salud de batería parseado del título/descripción (ej. "Battery Health 87%") */
+  bateriaPct: Spec<number>;
   sinOs: boolean;
   cantidadLote: number | null;
   detallesSugeridos: string[];
@@ -66,6 +68,8 @@ export interface Parametros {
   tarifaBarcoPorPie3: number | null;
   tarifaAvionZoomPorKg: number | null;
   envioVzlaPorLaptop: number;
+  /** % de salud de batería por encima del cual no hace falta presupuestar batería nueva */
+  bateriaPctUmbral: number;
 }
 
 /** Semillas documentadas (§2.1) — la extensión funciona en modo degradado sin sesión */
@@ -80,6 +84,7 @@ export const PARAMETROS_DEFAULT: Parametros = {
   tarifaBarcoPorPie3: null,
   tarifaAvionZoomPorKg: null,
   envioVzlaPorLaptop: 12,
+  bateriaPctUmbral: 70,
 };
 
 export interface PrecioIdeal {

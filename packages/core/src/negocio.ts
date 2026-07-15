@@ -20,6 +20,13 @@ export interface Catalogo {
   detalles: DetalleCat[];
   /** §23: catálogo extensible de tipos de aviso */
   tiposAviso?: { clave: string; nombre: string }[];
+  /** eBay usernames normalizados (trim+lowercase) del historial de compras (lotes.vendedor).
+   *  undefined/vacío = sin datos → parseListing() omite el aviso "vendedor nuevo". */
+  vendedoresConocidos?: string[];
+  /** §23-like: eBay usernames normalizados (trim+lowercase) conocidos por indicar el % de
+   *  batería en sus publicaciones. GLOBAL/COMPARTIDO entre todos los usuarios de TecnoFal
+   *  (tabla vendedores_bateria, sin filtro por usuario) — igual que tiposAviso. */
+  vendedoresBateria?: string[];
   online: boolean;
 }
 
@@ -39,6 +46,12 @@ export interface ListingGuardar {
   estado: 'visto' | 'evaluado' | 'comprado' | 'descartado';
   /** hora absoluta de cierre de la subasta de eBay, parseada de texto relativo (ver tiempo.ts). null = no capturado */
   fechaFinSubasta: Date | null;
+  /** eBay username, auto-scrapeado. No confundir con lotes.vendedor (manual, tabla lotes). */
+  vendedor?: string | null;
+  vendedorPctPositivo?: number | null;
+  vendedorTotalVentas?: number | null;
+  /** cantidad de ofertas (bids) de la subasta. null = Buy It Now (sin subasta) o no capturado. */
+  cantidadOfertas?: number | null;
 }
 
 export interface CompraDatos {
@@ -130,6 +143,8 @@ export interface DataProvider {
     tipos: { clave: string; nombre: string }[],
     avisos: { marca: string; modelo: string; tipoClave: string; severidad: string; motivo: string | null }[],
   ): Promise<void>;
+  /** (opcional): publica vendedores conocidos por indicar el % de batería (global/compartido, aditivo) */
+  publicarVendedorBateria?(vendedores: string[]): Promise<void>;
   /**
    * Push de config local → espejo (opcional). ADITIVO Y SEGURO: solo hace upsert por clave
    * natural, NUNCA borra filas remotas, y salta cualquier sección local vacía (para que sea
@@ -159,6 +174,10 @@ export function listingAFila(l: ListingGuardar) {
     evaluacion_manual: l.evaluacionManual as object,
     estado: l.estado,
     fecha_fin_subasta: l.fechaFinSubasta ? l.fechaFinSubasta.toISOString() : null,
+    vendedor: l.vendedor ?? null,
+    vendedor_pct_positivo: l.vendedorPctPositivo ?? null,
+    vendedor_total_ventas: l.vendedorTotalVentas ?? null,
+    cantidad_ofertas: l.cantidadOfertas ?? null,
   };
 }
 

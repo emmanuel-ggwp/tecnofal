@@ -4,6 +4,41 @@ const spec = <T>(valor: T | null, confianza: Confianza): Spec<T> => ({ valor, co
 
 const norm = (s: string) => s.toLowerCase().replace(/[\s\-_/]+/g, ' ').trim();
 
+// Slot/bahía/puerto/conector de disco dañado = placa dañada (no se arregla barato) → bloquea.
+// El disco en sí dañado o ausente NO bloquea: se reemplaza, igual que "No SSD/No HDD" (alimenta faltantes).
+// La ventana entre slot y daño no cruza , . ; · ( ) para no mezclar frases/campos del listado.
+const SLOT_DISCO = String.raw`\b(?:ssd|hdd|m\.?2|nvme|sata|hard\s*(?:drive|disk)|storage)[\s()/-]{0,3}(?:slots?|bays?|cadd(?:y|ies)|connectors?|ports?|trays?)\b(?!\s*(?:covers?|doors?|lids?|screws?))`;
+const DANO_SLOT_DISCO: RegExp[] = [
+  // "SSD slot is broken", "M.2 slot damaged", "hard drive connector not working"
+  new RegExp(SLOT_DISCO + String.raw`[^.,;:·|()!]{0,25}\b(?:broken|damaged?|crack(?:ed)?|faulty|defective|bad|dead|inoperable|non[- ]?working|not\s+working|do(?:es)?\s*n[o']?t\s+work|won'?t\s+work)`, 'i'),
+  // "broken SSD slot", "damage to the M.2 port", "bad hdd caddy"
+  new RegExp(String.raw`\b(?:broken|damaged?|crack(?:ed)?|faulty|defective|bad|dead)\s+(?:(?:to|on|in|the|a)\s+){0,2}` + SLOT_DISCO, 'i'),
+  // locale español (eBay LATAM traduce los listados): "la ranura del SSD está rota/dañada"
+  /(?<!(?:tapas?|cubiertas?)\s+de\s+(?:la|el)\s+)\b(?:ranuras?|puertos?|conectore?s?|bah[ií]as?|slots?)\s+(?:(?:de|del|para|el|la)\s+){0,2}(?:ssd|hdd|m\.?2|nvme|discos?(?:\s+duros?)?(?!\s+[óo]ptic)|almacenamiento)\b[^.,;:·|()!]{0,25}\b(?:rot[oa]s?|dañad[oa]s?|quebrad[oa]s?|partid[oa]s?|mal[oa]s?|muert[oa]s?|no\s+funcionan?|no\s+sirven?)/i,
+];
+
+// §5.1 cargador: en texto real (packing list de la descripción, item specifics) casi nunca
+// aparece "charger included" tal cual — lo común es "1x Original Power Charger", "Charger:
+// Genuine Dell 65W", "AC Adapter" como línea de contenido de la caja. Mencionar el cargador/
+// adaptador casi siempre implica que se incluye; cuando falta, el vendedor SIEMPRE lo dice con
+// una negación explícita — por eso se prioriza detectar esa negación primero, y cualquier otra
+// mención se toma como confirmación (en vez de exigir la frase exacta "charger included").
+const CARGADOR_KW = String.raw`(?:charger|adapter|ac\s*adapter|ac\s*brick|power\s*(?:cord|supply|adapter|brick)|ac\s+cord|cargador(?:es)?|adaptador(?:es)?)s?`;
+const SIN_CARGADOR: RegExp[] = [
+  new RegExp(String.raw`\bno\s+` + CARGADOR_KW + String.raw`\b`, 'i'),
+  new RegExp(CARGADOR_KW + String.raw`\b[^.,;:·|()!]{0,20}\b(?:not\s+included|not\s+provided|missing|excluded|sold\s+separately)\b`, 'i'),
+  // orden invertido: "missing/excluded/sold separately/not included: CARGADOR" (packing list negado; admite ":")
+  new RegExp(String.raw`\b(?:missing|excluded|sold\s+separately|not\s+included|not\s+provided)\b:?[^.,;·|()!]{0,20}` + CARGADOR_KW, 'i'),
+  // "without a CASE but WITH charger" no debe contar como "sin cargador": no cruza un "with" real antes del cargador
+  new RegExp(String.raw`\bwithout\b(?:(?!\bwith\b)[^.,;:·|()!]){0,20}\b(?:charger|adapter)\b`, 'i'),
+  new RegExp(String.raw`\bsin\b[^.,;:·|()!]{0,20}` + CARGADOR_KW, 'i'),
+  // español: "no incluye/incluyen cargador" (no solo "sin cargador")
+  new RegExp(String.raw`\bno\s+inclu\w*\b[^.,;:·|()!]{0,20}` + CARGADOR_KW, 'i'),
+  // "does not come with / doesn't include / won't come with a charger"
+  new RegExp(String.raw`\b(?:do(?:es)?\s*n[o']?t|won'?t)\s+(?:come\s+with|ship\s+with|include)\b[^.,;:·|()!]{0,20}` + CARGADOR_KW, 'i'),
+];
+const CON_CARGADOR = new RegExp(String.raw`\b` + CARGADOR_KW + String.raw`\b`, 'i');
+
 /** Peor primero: bloqueada > RAM soldada total > condicional > revisar/parcial > normal; empate → gen más vieja */
 const rangoPeor = (m: ModeloInfo): number =>
   m.reglaCompra === 'bloqueada' ? 0
@@ -17,6 +52,7 @@ export function parseListing(
   modelos: ModeloInfo[] = [],
   textoDanos?: string,
   modeloForzado?: ModeloInfo | null,
+  bateriaPctUmbral = 70,
 ): SpecsParseadas {
   const t = texto;
   const td = textoDanos ?? texto;
@@ -92,18 +128,48 @@ export function parseListing(
   else if (/touch\s*(?:screen)?/i.test(t)) pantallaTactil = spec(true, 'confirmado');
 
   let cargadorIncluido = spec<boolean>(null, 'no_mencionado');
-  if (/no\s+(?:charger|adapter|ac\s*adapter|power\s*(?:cord|supply|adapter|brick)|ac\s+cord)/i.test(t)) cargadorIncluido = spec(false, 'confirmado');
-  else if (/(?:charger|adapter)\s+(?:included|incl)/i.test(t) || /with\s+charger/i.test(t)) cargadorIncluido = spec(true, 'confirmado');
+  if (SIN_CARGADOR.some((re) => re.test(t))) cargadorIncluido = spec(false, 'confirmado');
+  else if (CON_CARGADOR.test(t)) cargadorIncluido = spec(true, 'confirmado');
 
   let bateriaIncluida = spec<boolean>(null, 'no_mencionado');
   if (/no\s+batt(?:ery)?\b|battery\s+(?:not\s+included|missing|removed|dead|bad)/i.test(t)) bateriaIncluida = spec(false, 'confirmado');
   else if (/battery\s+(?:included|good|great|holds|tested|health)/i.test(t)) bateriaIncluida = spec(true, 'confirmado');
 
+  // % de salud de batería (ej. "Battery Health 87%", "87% battery", "batería al 90%",
+  // "Battery Health: 38.9% (Generated from Battery Report)").
+  // Ventana acotada de 20 caracteres sin cruzar , . ; · ( ) — mismo criterio que SLOT_DISCO,
+  // salvo ":" que sí se permite cruzar (formato habitual "Battery Health: X%" de reportes de batería).
+  // El número admite decimales (se trunca al entero con parseInt, ej. 38.9 → 38).
+  const BATERIA_PCT: RegExp[] = [
+    /batt(?:ery)?\b[^.,;·|()!]{0,20}?\b(\d{1,3}(?:\.\d+)?)\s*%/i,
+    /\b(\d{1,3}(?:\.\d+)?)\s*%[^.,;·|()!]{0,20}?\bbatt(?:ery)?\b/i,
+    /bater[ií]a\b[^.,;·|()!]{0,20}?\b(\d{1,3}(?:\.\d+)?)\s*%/i,
+    /\b(\d{1,3}(?:\.\d+)?)\s*%[^.,;·|()!]{0,20}?\bbater[ií]a\b/i,
+  ];
+  let bateriaPct = spec<number>(null, 'no_mencionado');
+  for (const re of BATERIA_PCT) {
+    const m = t.match(re);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (n >= 0 && n <= 100) { bateriaPct = spec(n, 'confirmado'); break; }
+    }
+  }
+  // el % explícito manda sobre el keyword genérico "health"/"good"/etc.: por encima del
+  // umbral no hace falta presupuestar batería nueva; por debajo, sí (aunque el título
+  // suene positivo) — a menos que ya viniera "dead/bad/missing" (eso manda siempre).
+  // No se agrega a `alertas`: el % de batería ya se muestra en su propio indicador dedicado
+  // (fila de batería del panel, chip/tooltip en la búsqueda) — duplicarlo ahí sería redundante.
+  if (bateriaPct.valor != null && bateriaIncluida.valor !== false) {
+    bateriaIncluida = spec(bateriaPct.valor > bateriaPctUmbral, 'confirmado');
+  }
+
   const sinOs = /no\s+(?:os|operating\s*system|windows)\b/i.test(t);
 
   // Falla funcional real (siempre bloquea, con o sin "for parts")
+  // "work" (además de turn on/power/boot) cubre "screen/keyboard does not work", "won't work" —
+  // mismo criterio que ya usa SLOT_DISCO para "SSD slot does not work".
   const fallaFuncional =
-    /\bnot\s+working\b|\bnon[- ]?functional\b|\bnot\s+functional\b|\bdoa\b|\bno\s+power\b(?!\s*(?:cord|adapter|supply|cable|brick))|won'?t\s+(?:turn\s+on|power|boot)|does\s*n[o']?t\s+(?:turn\s+on|power|boot)/i.test(t)
+    /\bnot\s+working\b|\bnon[- ]?functional\b|\bnot\s+functional\b|\bdoa\b|\bno\s+power\b(?!\s*(?:cord|adapter|supply|cable|brick))|won'?t\s+(?:turn\s+on|power|boot|work)|does\s*n[o']?t\s+(?:turn\s+on|power|boot|work)/i.test(t)
     // locale español (títulos/condición de eBay LATAM)
     || /\bno\s+(?:enciende|funciona|prende)\b/i.test(t);
   // "For parts"/"as-is": solo es un disclaimer — NO bloquea por sí solo, solo si viene con falla funcional
@@ -116,6 +182,7 @@ export function parseListing(
     alertas.push('⚠ "For parts / as-is": confirmar que enciende antes de pujar');
   }
   if (/\buntested\b/i.test(t)) alertas.push('⚠ "Untested": revisar/preguntar al vendedor antes de pujar');
+  if (DANO_SLOT_DISCO.some((re) => re.test(t))) bloqueos.push('Slot/puerto de disco dañado ("SSD slot broken")');
   if (/\b(celeron|pentium|athlon)\b/i.test(t)) bloqueos.push('CPU Celeron/Pentium/Athlon');
   if (/chromebook/i.test(t)) bloqueos.push('Chromebook');
   if (/1366\s*x\s*768|\bTN\s+panel\b/i.test(t)) alertas.push('Pantalla 1366×768 TN — condicional (decide el precio)');
@@ -125,8 +192,11 @@ export function parseListing(
     [/lines?\s+on\s+(?:the\s+)?(?:screen|lcd|display)/i, 'Pantalla con líneas'],
     [/spots?\s+on\s+(?:the\s+)?(?:screen|lcd)|pressure\s*marks?|dead\s*pixels?/i, 'Pantalla con manchas'],
     [/scratch(?:es|ed)?|scuffs?|dents?|dings?|heavy\s+wear|\bchips\b/i, 'Carcasa marcada'],
-    [/broken\s+hinge|hinge\s+(?:broken|loose|damaged?)|loose\s+hinge/i, 'Bisagra floja'],
-    [/missing\s+keys?|keys?\s+missing/i, 'Tecla(s) faltante(s)'],
+    // bisagra dañada "de cualquier forma": floja/rota/agrietada/quebrada/tornillos faltantes, en cualquier orden con "hinge(s)"
+    [/\bhinges?\b[^.,;:·|()!]{0,25}\b(?:broken|loose|damaged?|crack(?:ed)?|snapped?|wobbl(?:y|es|ing)|missing|popped?(?:\s+out)?|stripped)\b|\b(?:broken|loose|damaged?|crack(?:ed)?|snapped?|wobbl(?:y|es)|stripped)\s+(?:(?:left|right|display)\s+)?hinges?\b|\bhinge\s+screws?\s+(?:missing|stripped)\b|\bbisagras?\s+(?:rota?s?|floja?s?|dañada?s?|quebrada?s?|partida?s?)\b/i, 'Bisagra floja'],
+    // cubre tanto "missing key(s)" (tecla completa) como "key cap/keycap missing" (solo la tapa)
+    [/\bmissing\s+key(?:\s*cap)?s?\b|\bkey(?:\s*cap)?s?\s+(?:(?:is|are)\s+)?missing\b/i, 'Tecla(s) faltante(s)'],
+    [/(?:touch\s*pad|trackpad|mouse\s*pad)\b[^.,;:·|()!]{0,25}\b(?:not\s+working|not\s+responding|does\s*n[o']?t\s+work|won'?t\s+work|broken|stick(?:s|y)?|unreliable|unresponsive|faulty|dead|no\s+funciona)\b|\b(?:erratic|faulty|unresponsive|broken)\s+(?:touch\s*pad|trackpad|mouse\s*pad)\b/i, 'Falla botón touchpad'],
     [/speakers?\s+(?:not\s+working|blown|bad|crackl)/i, 'Corneta dañada'],
   ];
   const detallesSugeridos = MAPA_DETALLES.filter(([re]) => re.test(td)).map(([, nombre]) => nombre);
@@ -196,7 +266,7 @@ export function parseListing(
 
   return {
     cpuTipo, cpuGen, ramGb, ssdGb, esHdd,
-    pantallaPulgadas, pantallaTactil, cargadorIncluido, bateriaIncluida,
+    pantallaPulgadas, pantallaTactil, cargadorIncluido, bateriaIncluida, bateriaPct,
     sinOs, cantidadLote, detallesSugeridos, modeloDetectado, alertas, bloqueos,
   };
 }

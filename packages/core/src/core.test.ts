@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseListing } from './parser.js';
-import { cadenaCostos, evaluar, precioPuja } from './evaluacion.js';
+import { ajusteRam, ajusteSsd, cadenaCostos, evaluar, precioPuja } from './evaluacion.js';
 import { PARAMETROS_DEFAULT, type EntradaEvaluacion, type ModeloInfo, type PrecioIdeal } from './types.js';
 import { MODELOS_SEMILLA } from './seeds.js';
 import { badgeDeResultado, colorDeMargen } from './badge.js';
@@ -45,6 +45,81 @@ describe('parser §5.1', () => {
     const s = parseListing('HP EliteBook 840 G5 i5-8250U 8GB RAM 256GB SSD', []);
     expect(s.cargadorIncluido.confianza).toBe('no_mencionado');
     expect(s.bateriaIncluida.confianza).toBe('no_mencionado');
+  });
+
+  it('cargador: cualquier mención real (no solo "charger included") cuenta como incluido', () => {
+    expect(parseListing('Dell Latitude 7490 i5-8350U 8GB · Package List: 1 x Original Power Charger', []).cargadorIncluido.valor).toBe(true);
+    expect(parseListing('Dell Latitude 7490 i5-8350U 8GB · Charger: Genuine Dell 65W', []).cargadorIncluido.valor).toBe(true);
+    expect(parseListing('Dell Latitude 7490 i5-8350U 8GB · Included Items · AC Adapter', []).cargadorIncluido.valor).toBe(true);
+    // negación explícita sigue ganando
+    expect(parseListing('Dell Latitude 7490 i5-8350U 8GB · Charger not included, sold as-is', []).cargadorIncluido.valor).toBe(false);
+    expect(parseListing('Dell Latitude 7490 i5-8350U 8GB · Comes without the original charger', []).cargadorIncluido.valor).toBe(false);
+    // un "no" de otro contexto, lejos y separado por puntuación, NO debe leerse como "sin cargador"
+    const lejos = parseListing(
+      'Dell Latitude 7490 i5-8350U 8GB. No scratches on the case. Great battery life. '
+      + 'Screen is perfect, no dead pixels. Keyboard works great, no sticky keys. '
+      + 'Package List: 1 x Power Adapter included.',
+      [],
+    );
+    expect(lejos.cargadorIncluido.valor).toBe(true);
+  });
+
+  // Cobertura amplia de "sí" (incluido) — variantes reales de eBay más allá de "charger included",
+  // en inglés y español, genérico/original, y con ruido tipo "not tested"/"works fine" que NO es negación real.
+  it.each([
+    'charger included',
+    '1x Original Power Charger',
+    'Charger: Genuine Dell 65W',
+    'Included Items: AC Adapter',
+    'comes with charger',
+    'includes power cord',
+    'cargador incluido',
+    'incluye adaptador original',
+    'power supply included',
+    '3rd party charger included',
+    'generic charger included, not original',
+    'with power brick',
+    'charger not tested but included',
+    'charger works fine',
+    'comes complete with charger and case',
+  ])('cargador SÍ incluido: "%s"', (frase) => {
+    const s = parseListing(`Dell Latitude 7490 i5-8350U 8GB RAM 256GB SSD · ${frase}`, []);
+    expect(s.cargadorIncluido.valor).toBe(true);
+  });
+
+  // Cobertura amplia de "no" (faltante) — orden normal e invertido ("missing: charger"), inglés/español,
+  // frases naturales ("does not come with"), y compuestas (varios ítems excluidos a la vez).
+  it.each([
+    'no charger',
+    'no charger included',
+    'charger not included',
+    'AC adapter not provided',
+    'missing charger',
+    'charger missing',
+    'without the charger',
+    'sin cargador',
+    'sold separately: charger',
+    'AC adapter excluded',
+    'no incluye cargador',
+    'battery and charger not included',
+    'charger sold separately, not included in this listing',
+    'this laptop does not come with a charger',
+    "doesn't come with a charger",
+    'no ac adapter is provided',
+    'not included: charger',
+    "doesn't include a charger",
+  ])('cargador NO incluido: "%s"', (frase) => {
+    const s = parseListing(`Dell Latitude 7490 i5-8350U 8GB RAM 256GB SSD · ${frase}`, []);
+    expect(s.cargadorIncluido.valor).toBe(false);
+  });
+
+  it('cargador: trampas — negación de OTRO ítem no debe marcar el cargador como faltante', () => {
+    // "sin funda, pero con cargador": el "without" debe frenar en el "with" real y no seguir hasta "charger"
+    expect(parseListing('Dell Latitude 7490 i5-8350U 8GB · without a case but with charger included', []).cargadorIncluido.valor).toBe(true);
+    // "no rayones, no dead pixels" cerca pero de otro tema — no debe leerse como "no charger"
+    expect(parseListing('Dell Latitude 7490 i5-8350U 8GB · no scratches, no dents, charger included', []).cargadorIncluido.valor).toBe(true);
+    // "charger and battery sold separately": aquí SÍ debe ganar la negación — el cargador también está excluido
+    expect(parseListing('Dell Latitude 7490 i5-8350U 8GB · charger and battery sold separately', []).cargadorIncluido.valor).toBe(false);
   });
 
   it('CPU asumida por modelo cuando el título no la menciona (referencia Dell)', () => {
@@ -114,6 +189,65 @@ describe('parser §5.1', () => {
     expect(dosEnUno.alertas.some((a) => a.includes('soldada'))).toBe(true);
   });
 
+  it('slot/puerto de disco dañado bloquea; el disco dañado o ausente NO bloquea', () => {
+    expect(parseListing('Dell Latitude 7490 i5-8350U 8GB · SSD slot is broken', []).bloqueos.some((b) => b.includes('Slot/puerto'))).toBe(true);
+    expect(parseListing('Lenovo ThinkPad T480 i5 8GB M.2 slot damaged', []).bloqueos.length).toBe(1);
+    expect(parseListing('HP EliteBook 840 G5 broken SSD slot', []).bloqueos.length).toBe(1);
+    expect(parseListing('Dell E7450 i5 hard drive connector broken', []).bloqueos.length).toBe(1);
+    // eBay LATAM traduce el listado al español
+    expect(parseListing('Dell 5490 i5 · Notas del vendedor: la ranura del SSD está rota', []).bloqueos.length).toBe(1);
+    // el disco dañado/ausente se reemplaza (faltante) — solo el slot/puerto/conector es placa dañada
+    expect(parseListing('Dell Latitude 5490 i5 8GB No SSD cracked screen', []).bloqueos).toEqual([]);
+    expect(parseListing('Lenovo T470 i5 bad hard drive, boots to bios', []).bloqueos).toEqual([]);
+    expect(parseListing('Dell 7490 dual M.2 slots 512GB SSD', []).bloqueos).toEqual([]);
+    expect(parseListing('Lenovo T450 damaged hard drive bay cover', []).bloqueos).toEqual([]);
+  });
+
+  it('% de batería: inglés y español, confirmado, umbral default 70', () => {
+    const alto = parseListing('Dell Latitude 7490 i5-8350U 16GB RAM 512GB SSD Battery Health 87%', []);
+    expect(alto.bateriaPct).toEqual({ valor: 87, confianza: 'confirmado' });
+    expect(alto.bateriaIncluida.valor).toBe(true);
+    expect(alto.alertas.some((a) => a.includes('Batería al'))).toBe(false);
+
+    const bajo = parseListing('Dell Latitude 7490 i5-8350U 16GB RAM 512GB SSD Battery Health 55%', []);
+    expect(bajo.bateriaPct).toEqual({ valor: 55, confianza: 'confirmado' });
+    expect(bajo.bateriaIncluida.valor).toBe(false);
+    // el % bajo no se duplica en `alertas`: ya se muestra en el indicador dedicado de batería
+    expect(bajo.alertas.some((a) => a.includes('Batería al'))).toBe(false);
+
+    // orden invertido (número antes de la palabra)
+    const invertido = parseListing('Dell Latitude 7490 i5-8350U 16GB RAM 512GB SSD 92% battery', []);
+    expect(invertido.bateriaPct.valor).toBe(92);
+    expect(invertido.bateriaIncluida.valor).toBe(true);
+
+    // español
+    const esAlto = parseListing('Dell Latitude 7490 i5 16GB 512GB · Batería al 90%', []);
+    expect(esAlto.bateriaPct.valor).toBe(90);
+    expect(esAlto.bateriaIncluida.valor).toBe(true);
+    const esBajo = parseListing('Dell Latitude 7490 i5 16GB 512GB · 40% de batería', []);
+    expect(esBajo.bateriaPct.valor).toBe(40);
+    expect(esBajo.bateriaIncluida.valor).toBe(false);
+
+    // sin % explícito: se mantiene el comportamiento de keywords existente
+    const sinPct = parseListing('Dell Latitude 7490 i5-8350U 16GB RAM 512GB SSD battery good', []);
+    expect(sinPct.bateriaPct.valor).toBeNull();
+    expect(sinPct.bateriaIncluida.valor).toBe(true);
+
+    // "Battery Health: X.X% (...)" — reporte de batería de Windows: dos puntos y decimal
+    const reporte = parseListing('Dell Latitude 7490 i5-8350U 16GB RAM 512GB SSD Battery Health: 38.9% (Generated from Battery Report)', []);
+    expect(reporte.bateriaPct).toEqual({ valor: 38, confianza: 'confirmado' });
+    expect(reporte.bateriaIncluida.valor).toBe(false);
+  });
+
+  it('% de batería: umbral configurable, y "dead/missing" manda sobre el % aunque sea alto', () => {
+    const s = parseListing('Dell Latitude 7490 i5-8350U 16GB RAM 512GB SSD Battery Health 75%', [], undefined, undefined, 80);
+    expect(s.bateriaPct.valor).toBe(75);
+    expect(s.bateriaIncluida.valor).toBe(false); // 75% <= umbral custom (80)
+
+    const muerta = parseListing('Dell Latitude 7490 i5-8350U 16GB RAM 512GB SSD battery dead, Battery Health 95%', []);
+    expect(muerta.bateriaIncluida.valor).toBe(false);
+  });
+
   it('b) "No OS/No Batt/No HDD/No Power Cord" NUNCA bloquean — alimentan extras', () => {
     const s = parseListing('Lenovo ThinkPad T450 i5-5300U 8GB RAM No OS No Batt No HDD No Power Cord', []);
     expect(s.bloqueos).toEqual([]);
@@ -137,6 +271,81 @@ describe('parser §5.1', () => {
     expect(s.detallesSugeridos).toContain('Tecla(s) faltante(s)');
     expect(s.bloqueos).toEqual([]);
     expect(parseListing('HP EliteBook 840 G5 i5-8250U 8GB RAM 256GB SSD', []).detallesSugeridos).toEqual([]);
+  });
+
+  // "screen does not work" (sin gerundio) es la misma falla real que "screen is not working":
+  // fallaFuncional debe cubrir ambas formas gramaticales, igual que ya hace SLOT_DISCO.
+  it.each([
+    'screen does not work',
+    "the screen doesn't work",
+    'screen is not working',
+    'display does not work',
+    'LCD not working',
+    "screen won't work",
+    'screen not working properly',
+  ])('pantalla que no funciona → bloqueo: "%s"', (frase) => {
+    const s = parseListing(`Dell Latitude 7490 i5-8350U 8GB RAM 256GB SSD ${frase}`, []);
+    expect(s.bloqueos.length).toBeGreaterThan(0);
+  });
+
+  it.each([
+    'screen has a dead pixel',
+    'screen has dead pixels',
+    'there is a dead pixel on the screen',
+    'LCD has dead pixel',
+    'display has dead pixels near the corner',
+    'one dead pixel visible on screen',
+  ])('pantalla con dead pixel → detalle "Pantalla con manchas": "%s"', (frase) => {
+    const s = parseListing(`Dell Latitude 7490 i5-8350U 8GB RAM 256GB SSD ${frase}`, []);
+    expect(s.detallesSugeridos).toContain('Pantalla con manchas');
+  });
+
+  it.each([
+    'hinge is cracked',
+    'hinges are broken',
+    'wobbly hinge',
+    'one of the hinges is loose',
+    'snapped hinge',
+    'hinge screw missing',
+    'left hinge broken',
+    'display hinge damaged',
+    'hinge popped out',
+    'bisagra rota',
+  ])('bisagra dañada de cualquier forma → detalle "Bisagra floja": "%s"', (frase) => {
+    const s = parseListing(`Dell Latitude 7490 i5-8350U 8GB RAM 256GB SSD ${frase}`, []);
+    expect(s.detallesSugeridos).toContain('Bisagra floja');
+  });
+
+  it.each([
+    'key cap missing',
+    'keycap missing',
+    'missing key cap',
+    'missing keycap',
+    'key caps missing',
+    'some keycaps are missing',
+    'cap of the key is missing',
+    'missing key button',
+    'missing keys',
+    '2 keys missing',
+  ])('teclas faltantes (incl. keycap) → detalle "Tecla(s) faltante(s)": "%s"', (frase) => {
+    const s = parseListing(`Dell Latitude 7490 i5-8350U 8GB RAM 256GB SSD ${frase}`, []);
+    expect(s.detallesSugeridos).toContain('Tecla(s) faltante(s)');
+  });
+
+  it.each([
+    'touchpad not working',
+    "touchpad doesn't work",
+    'trackpad is not responding',
+    'touchpad button broken',
+    'left click button on touchpad broken',
+    'touchpad sticks',
+    'touchpad is sticky',
+    'erratic touchpad',
+    'touchpad clicks are unreliable',
+    'mousepad no funciona',
+  ])('touchpad dañado → detalle "Falla botón touchpad": "%s"', (frase) => {
+    const s = parseListing(`Dell Latitude 7490 i5-8350U 8GB RAM 256GB SSD ${frase}`, []);
+    expect(s.detallesSugeridos).toContain('Falla botón touchpad');
   });
 
   it('a) detección de lote: "Lot of 2"', () => {
@@ -224,6 +433,13 @@ describe('motor §4', () => {
     expect(r.semaforo).toBe('rojo'); // margen ≈ 0.45 < ganancia_minima
     expect(r.margen).toBeGreaterThan(0.4);
     expect(r.margen).toBeLessThan(0.5);
+  });
+
+  it('ajusteRam/ajusteSsd: itemizado consistente con r.ajustes', () => {
+    expect(ajusteRam(entrada.ramGb, AJUSTES)).toBe(10); // 16GB → +8GB sobre base de 8
+    expect(ajusteSsd(entrada.ssdGb, AJUSTES)).toBe(0); // 256GB = base, sin extra
+    expect(ajusteRam(null, AJUSTES)).toBe(0);
+    expect(ajusteSsd(null, AJUSTES)).toBe(0);
   });
 
   it('S_max: comprar en S_max deja margen ≈ ganancia_minima', () => {

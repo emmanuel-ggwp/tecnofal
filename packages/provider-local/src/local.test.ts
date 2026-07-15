@@ -24,6 +24,39 @@ describe('provider-local (§22)', () => {
     expect(c.parametros.envioVzlaPorLaptop).toBe(12);
   });
 
+  it('aplicarConfigRemota persiste vendedoresConocidos (meta); cargarCatalogo lo devuelve', async () => {
+    const antes = await p.cargarCatalogo();
+    expect(antes.vendedoresConocidos).toEqual([]);
+    await p.aplicarConfigRemota({ ...antes, vendedoresConocidos: ['sam-74545', 'otro'] });
+    expect((await p.cargarCatalogo()).vendedoresConocidos).toEqual(['sam-74545', 'otro']);
+  });
+
+  it('default de bateriaPctUmbral es 70 sin fila en parametros', async () => {
+    expect((await p.cargarCatalogo()).parametros.bateriaPctUmbral).toBe(70);
+  });
+
+  it('marcarVendedorBateria marca dirty; vendedoresBateriaSucios/marcarVendedorBateriaLimpio funcionan', async () => {
+    await p.cargarCatalogo();
+    await p.marcarVendedorBateria('Sam-74545 ');
+    expect(await p.vendedoresBateriaSucios()).toEqual([{ nombre: 'sam-74545', dirty: 1 }]);
+    expect((await p.cargarCatalogo()).vendedoresBateria).toEqual(['sam-74545']);
+    await p.marcarVendedorBateriaLimpio('sam-74545');
+    expect(await p.vendedoresBateriaSucios()).toEqual([]);
+    // idempotente: no duplica ni vuelve a marcar dirty si ya existe
+    await p.marcarVendedorBateria('sam-74545');
+    expect(await p.vendedoresBateriaSucios()).toEqual([]);
+  });
+
+  it('aplicarConfigRemota (vendedoresBateria) no pisa una fila local dirty:1 pendiente de empujar', async () => {
+    const antes = await p.cargarCatalogo();
+    await p.marcarVendedorBateria('nuevo-local');
+    await p.aplicarConfigRemota({ ...antes, vendedoresBateria: ['otro-remoto'] });
+    const sucios = await p.vendedoresBateriaSucios();
+    expect(sucios.map((v) => v.nombre)).toContain('nuevo-local'); // sigue dirty:1, no lo pisó el pull
+    const cat = await p.cargarCatalogo();
+    expect(cat.vendedoresBateria).toEqual(expect.arrayContaining(['nuevo-local', 'otro-remoto']));
+  });
+
   it('guardar listing → dirty + manual; check lo encuentra', async () => {
     await p.guardarListing(listing('111'));
     const vistos = await p.checkListings(['111', '222']);

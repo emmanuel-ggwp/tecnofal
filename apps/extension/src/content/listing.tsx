@@ -10,6 +10,18 @@ function texto(sel: string): string {
   return document.querySelector(sel)?.textContent?.trim() ?? '';
 }
 
+// Descripción del vendedor: vive en un iframe cross-origin (ver src/content/descripcion.ts)
+// que nos la manda por postMessage — no se puede leer con document.querySelector desde acá.
+let descripcionExterna: string | null = null;
+window.addEventListener('message', (ev) => {
+  let host = '';
+  try { host = new URL(ev.origin).hostname; } catch { return; }
+  if (!host.endsWith('.ebaydesc.com')) return;
+  if (ev.data?.tecnofal === true && ev.data.tipo === 'descripcion' && typeof ev.data.texto === 'string') {
+    descripcionExterna = ev.data.texto;
+  }
+});
+
 /** Costo de envío: eBay cambia de layout seguido — se prueban candidatos hasta que uno tenga precio (o diga gratis). */
 function envioDePagina(): number {
   const candidatos: string[] = [
@@ -41,6 +53,37 @@ function fechaFinDePagina(): Date | null {
   return parsearTiempoRestante(txt);
 }
 
+/** Cantidad de ofertas (bids) de la subasta. null = Buy It Now (sin subasta) o no capturado. */
+function cantidadOfertasDePagina(): number | null {
+  const m = texto('[data-testid="x-bid-count"], .x-bid-count').match(/(\d+)\s*bids?/i);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+/** Tarjeta del vendedor: username + % feedback positivo + total de feedback/ventas.
+ *  El username se saca del href del link (/str/<user> o /usr/<user>) — el texto visible acá
+ *  suele ser el nombre de tienda ("Bruin Computer Trading"), distinto del username que sí
+ *  muestra el grid de búsqueda ("bruincomputer"); sin esto, el mismo vendedor real nunca
+ *  matchea entre la página individual y el grid (avisos de "ya comprado"/batería rotos). */
+function vendedorDePagina(): { vendedor: string | null; vendedorPctPositivo: number | null; vendedorTotalVentas: number | null } {
+  const elVendedor = document.querySelector('.x-sellercard-atf__about-seller-item--seller-name');
+  const href = elVendedor?.querySelector('a')?.getAttribute('href') ?? '';
+  const usernameDeUrl = href.match(/\/(?:str|usr)\/([^/?]+)/)?.[1];
+  const vendedor = (usernameDeUrl ? decodeURIComponent(usernameDeUrl) : elVendedor?.textContent?.trim()) || null;
+  const totalTxt = texto('[data-testid="x-sellercard-atf__about-seller"]');
+  const total = totalTxt ? parseInt(totalTxt.replace(/[^\d]/g, ''), 10) : NaN;
+  const vendedorTotalVentas = Number.isNaN(total) ? null : total;
+  let vendedorPctPositivo: number | null = null;
+  for (const el of document.querySelectorAll('[data-testid="x-sellercard-atf__data-item"]')) {
+    const m = el.textContent?.match(/(\d+(?:\.\d+)?)\s*%\s*positive/i);
+    if (m) { vendedorPctPositivo = parseFloat(m[1]); break; }
+  }
+  // Con 0 reseñas, el widget del vendedor de la página individual no muestra "X% positive"
+  // (nada que calcular) — a diferencia de la grilla de búsqueda, que sí renderiza "0% positive
+  // (0)". 0 reseñas ⇒ 0 positivas: mismo criterio que ya usa la grilla, para no perder el aviso.
+  if (vendedorPctPositivo == null && vendedorTotalVentas === 0) vendedorPctPositivo = 0;
+  return { vendedor, vendedorPctPositivo, vendedorTotalVentas };
+}
+
 function extraerPagina() {
   const itemId = location.pathname.match(/\/itm\/(\d+)/)?.[1] ?? location.href.match(/itm\/(\d+)/)?.[1] ?? null;
   const titulo =
@@ -59,7 +102,17 @@ function extraerPagina() {
     .filter(Boolean)
     .join(' · ');
 
-  return { itemId, titulo, precio, envio, textoCompleto: `${titulo} · ${specifics}` };
+  // Condición / "Notas del vendedor": frases tipo "SSD slot is broken" viven aquí, no en el título
+  const condicion = texto('.x-item-condition-text') || texto('[data-testid="x-item-condition"]');
+
+  const { vendedor, vendedorPctPositivo, vendedorTotalVentas } = vendedorDePagina();
+  const cantidadOfertas = cantidadOfertasDePagina();
+
+  return {
+    itemId, titulo, precio, envio,
+    textoCompleto: [titulo, condicion, specifics, descripcionExterna].filter(Boolean).join(' · '),
+    vendedor, vendedorPctPositivo, vendedorTotalVentas, cantidadOfertas,
+  };
 }
 
 // §16/§25: abrir el listing lo registra como 'visto' (si no estaba ya guardado),
@@ -67,7 +120,12 @@ function extraerPagina() {
 async function marcarVisto(pagina: ReturnType<typeof extraerPagina>, catalogo: Catalogo) {
   if (!pagina.itemId || !pagina.titulo) return;
   try {
-    const ev = pagina.precio != null ? evaluarListado(pagina.titulo, pagina.precio, pagina.envio, catalogo) : null;
+    const ev = pagina.precio != null
+      ? evaluarListado(
+          pagina.titulo, pagina.precio, pagina.envio, catalogo, undefined,
+          pagina.vendedor, pagina.vendedorPctPositivo, pagina.vendedorTotalVentas, pagina.cantidadOfertas,
+        )
+      : null;
     const listing: ListingGuardar = {
       ebayItemId: pagina.itemId,
       url: location.href.split('?')[0],
@@ -83,6 +141,10 @@ async function marcarVisto(pagina: ReturnType<typeof extraerPagina>, catalogo: C
       evaluacionManual: null,
       estado: 'visto',
       fechaFinSubasta: fechaFinDePagina(),
+      vendedor: pagina.vendedor,
+      vendedorPctPositivo: pagina.vendedorPctPositivo,
+      vendedorTotalVentas: pagina.vendedorTotalVentas,
+      cantidadOfertas: pagina.cantidadOfertas,
     };
     await enviar({ tipo: 'listings:guardar', listing });
   } catch { /* modo degradado: sin registro de vistos */ }
@@ -90,14 +152,19 @@ async function marcarVisto(pagina: ReturnType<typeof extraerPagina>, catalogo: C
 
 type Pagina = ReturnType<typeof extraerPagina> & { itemId: string; titulo: string };
 
-/** eBay a veces hidrata el título/precio tarde (esqueleto de carga): esperar en vez de rendirse */
-async function esperarPagina(maxMs = 15000): Promise<Pagina | null> {
+/** eBay a veces hidrata el título/precio tarde (esqueleto de carga): esperar en vez de rendirse.
+ *  También espera (con un presupuesto más corto) a que el iframe de descripción reporte su
+ *  texto por postMessage — si no llega a tiempo, se sigue igual con lo que haya (mejor
+ *  parcial que bloquear el panel indefinidamente si el iframe no carga o falla el postMessage). */
+async function esperarPagina(maxMs = 15000, maxMsDescripcion = 5000): Promise<Pagina | null> {
   const inicio = Date.now();
   for (;;) {
     const p = extraerPagina();
-    if (p.itemId && p.titulo) return p as Pagina;
     if (!p.itemId) return null; // no es una página /itm/ — no insistir
-    if (Date.now() - inicio > maxMs) return null;
+    const hayIframeDescripcion = !!document.getElementById('desc_ifr');
+    const esperandoDescripcion = hayIframeDescripcion && descripcionExterna == null && Date.now() - inicio < maxMsDescripcion;
+    if (p.itemId && p.titulo && !esperandoDescripcion) return p as Pagina;
+    if (Date.now() - inicio > maxMs) return p.titulo ? (p as Pagina) : null;
     await new Promise((r) => setTimeout(r, 500));
   }
 }
@@ -142,6 +209,10 @@ async function main() {
       textoCompleto={pagina.textoCompleto}
       precioInicial={pagina.precio}
       envioInicial={pagina.envio}
+      vendedor={pagina.vendedor}
+      vendedorPctPositivo={pagina.vendedorPctPositivo}
+      vendedorTotalVentas={pagina.vendedorTotalVentas}
+      cantidadOfertas={pagina.cantidadOfertas}
       catalogo={catalogo}
       estadoPrevio={previo?.estado ?? null}
       motivoDescartePrevio={previo?.motivoDescarte ?? null}

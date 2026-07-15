@@ -5,3 +5,4 @@ export * from './seeds.js';
 export * from './negocio.js';
 export * from './badge.js';
 export * from './tiempo.js';
+export * from './vendedor.js';

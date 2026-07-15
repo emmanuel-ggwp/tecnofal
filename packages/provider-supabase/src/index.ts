@@ -20,6 +20,7 @@ const CLAVES_PARAM: [keyof Parametros, string][] = [
   ['tarifaBarcoPorPie3', 'tarifa_barco_por_pie3'],
   ['tarifaAvionZoomPorKg', 'tarifa_avion_zoom_por_kg'],
   ['envioVzlaPorLaptop', 'envio_vzla_por_laptop'],
+  ['bateriaPctUmbral', 'bateria_pct_umbral'],
 ];
 
 // `detalles_catalogo.categoria` es el enum detalle_categoria_t. Local puede traer valores fuera
@@ -90,6 +91,7 @@ export class ProveedorSupabase implements Proveedor {
         tarifaBarcoPorPie3: p['tarifa_barco_por_pie3'] ?? null,
         tarifaAvionZoomPorKg: p['tarifa_avion_zoom_por_kg'] ?? null,
         envioVzlaPorLaptop: p['envio_vzla_por_laptop'] ?? PARAMETROS_DEFAULT.envioVzlaPorLaptop,
+        bateriaPctUmbral: p['bateria_pct_umbral'] ?? PARAMETROS_DEFAULT.bateriaPctUmbral,
       };
       let tiposAviso: { clave: string; nombre: string }[] | undefined;
       const avisosPor = new Map<string, { tipo: string; severidad: 'bloquea' | 'condiciona' | 'advierte' | 'nota'; motivo: string | null }[]>();
@@ -108,9 +110,34 @@ export class ProveedorSupabase implements Proveedor {
           }
         }
       } catch { /* sin 0007 aún */ }
+      let vendedoresConocidos: string[] = [];
+      try {
+        const { data, error } = await this.sb.from('lotes').select('vendedor');
+        if (!error) {
+          vendedoresConocidos = [...new Set(
+            (data ?? [])
+              .map((r) => (r.vendedor as string | null)?.trim().toLowerCase())
+              .filter((v): v is string => !!v),
+          )];
+        }
+      } catch { /* known-sellers es auxiliar: nunca debe tumbar el catálogo completo */ }
+      let vendedoresBateria: string[] = [];
+      try {
+        // global/compartido (§23-like): sin filtro por usuario, todos ven todo
+        const { data, error } = await this.sb.from('vendedores_bateria').select('vendedor');
+        if (!error) {
+          vendedoresBateria = [...new Set(
+            (data ?? [])
+              .map((r) => (r.vendedor as string | null)?.trim().toLowerCase())
+              .filter((v): v is string => !!v),
+          )];
+        }
+      } catch { /* auxiliar: nunca debe tumbar el catálogo completo */ }
       return {
         parametros,
         tiposAviso,
+        vendedoresConocidos,
+        vendedoresBateria,
         precios: (precios.data ?? []).map((r): PrecioIdeal => ({
           cpuTipo: r.cpu_tipo, genDesde: r.gen_desde, genHasta: r.gen_hasta, precioBase: Number(r.precio_base),
         })),
@@ -174,6 +201,7 @@ export class ProveedorSupabase implements Proveedor {
       .insert({
         origen: 'ebay',
         url_ebay: d.listing.url,
+        vendedor: d.listing.vendedor ?? null,
         precio_subasta: d.listing.precioVisto,
         envio_usa: d.envioUsa,
         costo_proyectado_total: proyectadoDeCompra(d),
@@ -215,6 +243,14 @@ export class ProveedorSupabase implements Proveedor {
         .insert({ modelo_id: mod.id, tipo_aviso_id: tipo.id, severidad: a.severidad, motivo: a.motivo, origen: 'usuario' });
       if (eA) throw new Error(eA.message);
     }
+  }
+
+  /** Publica vendedores conocidos por indicar el % de batería (global/compartido, aditivo) */
+  async publicarVendedorBateria(vendedores: string[]): Promise<void> {
+    if (vendedores.length === 0) return;
+    const { error } = await this.sb.from('vendedores_bateria')
+      .upsert(vendedores.map((v) => ({ vendedor: v })), { onConflict: 'vendedor', ignoreDuplicates: true });
+    if (error) throw new Error(error.message);
   }
 
   /**
