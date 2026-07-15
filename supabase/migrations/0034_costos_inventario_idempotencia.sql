@@ -66,7 +66,12 @@ create unique index partes_especificas_idem_uidx on partes_especificas (user_id,
 alter table laptop_partes add column idempotency_key text not null default gen_random_uuid()::text;
 create unique index laptop_partes_idem_uidx on laptop_partes (user_id, idempotency_key);
 
-create or replace function instalar_parte(
+-- DROP de la versión de 3 args (0022) ANTES de crear la de 4: 'create or replace' con distinta
+-- firma NO reemplaza — crea una segunda sobrecarga, y las llamadas de 3 args quedan ambiguas
+-- ("could not choose the best candidate function"). Igual que registrar_conversion/registrar_abono.
+drop function if exists instalar_parte(uuid, uuid, uuid);
+
+create function instalar_parte(
   p_laptop_id uuid,
   p_parte_id uuid default null,
   p_especifica_id uuid default null,
