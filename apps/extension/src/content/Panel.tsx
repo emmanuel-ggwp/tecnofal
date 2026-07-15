@@ -357,8 +357,15 @@ export function Panel(p: PanelProps) {
   );
 
   // este listing trae % de batería en el título/descripción → alimenta la lista global de vendedores
+  // (optimista: refleja el aviso ya en este mismo listado, sin esperar a recargar la página)
   useEffect(() => {
     if (specs.bateriaPct.valor != null && p.vendedor) {
+      const vNorm = p.vendedor.trim().toLowerCase();
+      if (vNorm) {
+        setCatalogo((c) => (c.vendedoresBateria?.includes(vNorm)
+          ? c
+          : { ...c, vendedoresBateria: [...(c.vendedoresBateria ?? []), vNorm] }));
+      }
       void enviar({ tipo: 'vendedor:marcarBateria', vendedor: p.vendedor }).catch(() => {});
     }
   }, [specs.bateriaPct.valor, p.vendedor]);

@@ -258,23 +258,32 @@ function evaluarYPintar(item: Item, catalogo: Catalogo, vistos: Map<string, Esta
   }
   // el subtítulo (condición: "Para repuestos solamente"…) también alimenta el parser
   const textoEval = item.subtitulo ? `${item.titulo} · ${item.subtitulo}` : item.titulo;
-  const { resultado, specs, avisosVendedor } = evaluarListado(
+  let { resultado, specs, avisosVendedor } = evaluarListado(
     textoEval, item.precio, item.envio, catalogo, undefined,
     item.vendedor, item.vendedorPctPositivo, item.vendedorTotalVentas, item.cantidadOfertas,
   );
+  if (specs.bateriaPct.valor != null && item.vendedor) {
+    const vNorm = item.vendedor.trim().toLowerCase();
+    if (vNorm && !vendedoresBateriaNotificados.has(vNorm)) {
+      vendedoresBateriaNotificados.add(vNorm);
+      // optimista: refleja el aviso ya en este mismo listado y en otros del mismo vendedor
+      // en esta página, sin esperar a recargar (mismo criterio que Panel.tsx)
+      if (!catalogo.vendedoresBateria?.includes(vNorm)) {
+        catalogo.vendedoresBateria = [...(catalogo.vendedoresBateria ?? []), vNorm];
+        ({ resultado, specs, avisosVendedor } = evaluarListado(
+          textoEval, item.precio, item.envio, catalogo, undefined,
+          item.vendedor, item.vendedorPctPositivo, item.vendedorTotalVentas, item.cantidadOfertas,
+        ));
+      }
+      void enviar({ tipo: 'vendedor:marcarBateria', vendedor: item.vendedor }).catch(() => {});
+    }
+  }
   const badge = badgeDeResultado(resultado, specs, catalogo.parametros);
   renderBadge(
     item, badge, visto,
     resultado.margen == null ? resultado.advertencias[0] : undefined,
     specs.bloqueos, specs.alertas, specs.bateriaPct.valor, avisosVendedor,
   );
-  if (specs.bateriaPct.valor != null && item.vendedor) {
-    const vNorm = item.vendedor.trim().toLowerCase();
-    if (vNorm && !vendedoresBateriaNotificados.has(vNorm)) {
-      vendedoresBateriaNotificados.add(vNorm);
-      void enviar({ tipo: 'vendedor:marcarBateria', vendedor: item.vendedor }).catch(() => {});
-    }
-  }
 }
 
 const idAItems = new Map<string, Item[]>();
