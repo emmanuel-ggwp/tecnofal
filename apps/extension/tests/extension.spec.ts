@@ -23,6 +23,9 @@ test.beforeAll(async () => {
     const url = route.request().url();
     if (url.includes('/sch/')) return route.fulfill({ contentType: 'text/html', body: fixture('search.html') });
     if (url.includes('/itm/')) return route.fulfill({ contentType: 'text/html', body: fixture('listing.html') });
+    if (url.includes('/mye/myebay/watchlist') || url.includes('/myb/watchlist')) {
+      return route.fulfill({ contentType: 'text/html', body: fixture('watchlist.html') });
+    }
     return route.fulfill({ status: 204, body: '' });
   });
   // Descripción del vendedor: iframe cross-origin (itm.ebaydesc.com) — ver src/content/descripcion.ts
@@ -183,4 +186,77 @@ test('listing: el panel muestra el vendedor', async () => {
   // "sam-74545" también aparece en la página cruda (fixture) fuera del panel — acotar al shadow host
   await expect(panel.getByText('sam-74545', { exact: false })).toBeVisible();
   await page.close();
+});
+
+test('watchlist: aparecen badges de semáforo y avisos de vendedor sobre las tarjetas', async () => {
+  const page = await context.newPage();
+  await page.goto('https://www.ebay.com/mye/myebay/watchlist');
+  const badges = page.locator('.tf-badge');
+  await expect(badges.first()).toBeVisible({ timeout: 20_000 });
+  expect(await badges.count()).toBeGreaterThanOrEqual(4);
+
+  // Lenovo "FOR PARTS no power" de un vendedor con pocas ventas y bajo % positivo: bloqueada
+  const bloqueada = page.locator('div.m-item-3-col:has(input[data-itemid="900000000002"]) .tf-badge');
+  await expect(bloqueada).toContainText('✗');
+
+  const float = page.locator('div.m-item-3-col:has(input[data-itemid="900000000002"]) .tf-vendor-float');
+  await expect(float).toContainText('Menos de 15 ventas');
+  await expect(float).toContainText('debajo de 80%');
+  await page.close();
+});
+
+test('watchlist: el % de batería del título se muestra como chip', async () => {
+  const page = await context.newPage();
+  await page.goto('https://www.ebay.com/mye/myebay/watchlist');
+  const chip = page.locator('div.m-item-3-col:has(input[data-itemid="900000000001"]) .tf-bateria');
+  await expect(chip).toBeVisible({ timeout: 20_000 });
+  await expect(chip).toHaveText('🔋53%');
+  await page.close();
+});
+
+test('watchlist: un item ya visto muestra la marca de estado pero NUNCA el atenuado/grayscale de la tarjeta', async () => {
+  // asegura el estado "visto" para 111111111111 sin depender del orden de otros tests: abre el
+  // listing y espera el roundtrip de 'listings:guardar' (mismo patrón que el test de countdown).
+  const p1 = await context.newPage();
+  await p1.goto('https://www.ebay.com/itm/111111111111');
+  await expect(p1.locator('#tecnofal-panel-host')).toBeAttached({ timeout: 20_000 });
+  await p1.close();
+  await new Promise((r) => setTimeout(r, 500));
+
+  const page = await context.newPage();
+  await page.goto('https://www.ebay.com/mye/myebay/watchlist');
+  const tarjeta = page.locator('div.m-item-3-col:has(input[data-itemid="111111111111"])');
+  await expect(tarjeta.locator('.tf-visto, .tf-estado')).toBeVisible({ timeout: 20_000 });
+  await expect(tarjeta).not.toHaveClass(/tf-item--visto/);
+  expect(await tarjeta.evaluate((el) => getComputedStyle(el).opacity)).toBe('1');
+  await page.close();
+});
+
+test('watchlist: al cargar corrige el fechaFinSubasta de un item ya guardado usando su countdown ("2h 46m", sin palabra disparadora)', async () => {
+  // id EXCLUSIVO de este test (900000000099, no tocado por ningún otro test del archivo): abrir
+  // el listing solo llama a marcarVisto()/recalcula fechaFinSubasta la PRIMERA vez que se ve
+  // (listing.tsx: `if (!previo) void marcarVisto(...)`) — reusar un id ya visto por otro test
+  // (ej. 111111111111) haría que esta apertura sea un no-op y el "antes" quede obsoleto.
+  const p1 = await context.newPage();
+  await p1.goto('https://www.ebay.com/itm/900000000099');
+  await expect(p1.locator('#tecnofal-panel-host')).toBeAttached({ timeout: 20_000 });
+  await p1.close();
+  await new Promise((r) => setTimeout(r, 500));
+  const antes = await obtenerListing('900000000099');
+  expect(antes?.fechaFinSubasta).not.toBeNull();
+
+  // 2) la Watchlist (watchlist.html) muestra el mismo item con "2h 46m" — a diferencia de
+  // search.ts, sin "Quedan"/"left" (formato real de la Watchlist) — diverge > 2min del guardado
+  // (~12min) ⇒ watchlist.ts debe corregirlo apenas carga, sin esperar los 5 min del intervalo.
+  const p2 = await context.newPage();
+  await p2.goto('https://www.ebay.com/mye/myebay/watchlist');
+  await expect(p2.locator('.tf-badge').first()).toBeVisible({ timeout: 20_000 });
+  await new Promise((r) => setTimeout(r, 800));
+  await p2.close();
+
+  const despues = await obtenerListing('900000000099');
+  const finAntes = new Date(antes!.fechaFinSubasta as string).getTime();
+  const finDespues = new Date(despues!.fechaFinSubasta as string).getTime();
+  // saltó de ~12min a ~2h46m: la diferencia debe ser de más de 1h
+  expect(finDespues - finAntes).toBeGreaterThan(60 * 60_000);
 });

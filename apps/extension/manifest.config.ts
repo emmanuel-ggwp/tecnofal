@@ -22,6 +22,16 @@ export default defineManifest({
       run_at: 'document_idle',
     },
     {
+      // Watchlist ("Mis artículos observados"): cubre el patrón clásico de My eBay y el
+      // rediseño — no se pudo confirmar cuál usa la cuenta del usuario sin sesión logueada.
+      matches: [
+        'https://www.ebay.com/mye/myebay/watchlist*',
+        'https://www.ebay.com/myb/watchlist*',
+      ],
+      js: ['src/content/watchlist.ts'],
+      run_at: 'document_idle',
+    },
+    {
       // Descripción del vendedor: eBay la renderiza en un iframe cross-origin
       // (itm.ebaydesc.com / vi.vipr.ebaydesc.com) — ahí viven frases tipo "Package
       // List: 1x Charger" que nunca aparecen en el frame principal del listing.
