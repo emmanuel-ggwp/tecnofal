@@ -35,6 +35,7 @@ export type Solicitud =
   | { tipo: 'config:importar'; json: string }
   | { tipo: 'modelo:marcar'; datos: MarcarModeloDatos }
   | { tipo: 'detalle:crear'; detalle: { categoria: string; nombre: string; deduccionBase: number } }
+  | { tipo: 'vendedor:marcarBateria'; vendedor: string }
   | { tipo: 'sync:estado' }
   | { tipo: 'sync:ahora' };
 

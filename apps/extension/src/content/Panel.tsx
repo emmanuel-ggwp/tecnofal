@@ -275,9 +275,22 @@ export function Panel(p: PanelProps) {
   // corrección manual del modelo (buscador): manda sobre la detección automática
   const [modeloOverride, setModeloOverride] = useState<ModeloInfo | null>(null);
   const specs = useMemo(
-    () => parseListing(p.textoCompleto, catalogo.modelos, p.titulo, modeloOverride, p.vendedor, catalogo.vendedoresConocidos),
-    [p.textoCompleto, p.titulo, catalogo.modelos, modeloOverride, p.vendedor, catalogo.vendedoresConocidos],
+    () => parseListing(
+      p.textoCompleto, catalogo.modelos, p.titulo, modeloOverride, p.vendedor, catalogo.vendedoresConocidos,
+      catalogo.vendedoresBateria, catalogo.parametros.bateriaPctUmbral,
+    ),
+    [
+      p.textoCompleto, p.titulo, catalogo.modelos, modeloOverride, p.vendedor, catalogo.vendedoresConocidos,
+      catalogo.vendedoresBateria, catalogo.parametros.bateriaPctUmbral,
+    ],
   );
+
+  // este listing trae % de batería en el título/descripción → alimenta la lista global de vendedores
+  useEffect(() => {
+    if (specs.bateriaPct.valor != null && p.vendedor) {
+      void enviar({ tipo: 'vendedor:marcarBateria', vendedor: p.vendedor }).catch(() => {});
+    }
+  }, [specs.bateriaPct.valor, p.vendedor]);
 
   const [abierto, setAbierto] = useState(true);
   // Los chips del encabezado muestran todo: la sección solo se abre para editar
@@ -774,10 +787,26 @@ export function Panel(p: PanelProps) {
           </span>
         )}
       </div>
+      {specs.bateriaPct.valor != null && (
+        <div
+          style={{
+            color: specs.bateriaPct.valor > catalogo.parametros.bateriaPctUmbral ? '#166534' : '#b45309',
+            fontWeight: 600, marginBottom: 4,
+          }}
+        >
+          🔋 Batería: {specs.bateriaPct.valor}%{' '}
+          {specs.bateriaPct.valor > catalogo.parametros.bateriaPctUmbral
+            ? '— no hace falta cambiarla'
+            : `— ≤${catalogo.parametros.bateriaPctUmbral}%: conviene presupuestar nueva`}
+        </div>
+      )}
       {(p.vendedor || p.cantidadOfertas != null) && (
         <div style={{ color: '#374151', marginBottom: 4 }}>
           {p.vendedor && (
             <>Vendedor: <b>{p.vendedor}</b>{' '}
+              {specs.vendedorMuestraBateria && (
+                <span title="Vendedor conocido por indicar el % de batería en sus publicaciones">🔋</span>
+              )}{' '}
               {p.vendedorPctPositivo != null && (
                 <span style={{ color: '#6b7280' }}>
                   · {p.vendedorPctPositivo}% positivo{p.vendedorTotalVentas != null ? ` (${p.vendedorTotalVentas})` : ''}

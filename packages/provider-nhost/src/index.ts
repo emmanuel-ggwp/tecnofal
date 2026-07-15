@@ -89,6 +89,7 @@ export class ProveedorNhost implements Proveedor {
         tarifaBarcoPorPie3: p['tarifa_barco_por_pie3'] ?? null,
         tarifaAvionZoomPorKg: p['tarifa_avion_zoom_por_kg'] ?? null,
         envioVzlaPorLaptop: p['envio_vzla_por_laptop'] ?? PARAMETROS_DEFAULT.envioVzlaPorLaptop,
+        bateriaPctUmbral: p['bateria_pct_umbral'] ?? PARAMETROS_DEFAULT.bateriaPctUmbral,
       };
       const m = d.modelos as unknown as {
         id: string; marca: string; modelo: string; cpu_tipo: string | null; cpu_gen: number | null;

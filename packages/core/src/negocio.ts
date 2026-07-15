@@ -23,6 +23,10 @@ export interface Catalogo {
   /** eBay usernames normalizados (trim+lowercase) del historial de compras (lotes.vendedor).
    *  undefined/vacío = sin datos → parseListing() omite el aviso "vendedor nuevo". */
   vendedoresConocidos?: string[];
+  /** §23-like: eBay usernames normalizados (trim+lowercase) conocidos por indicar el % de
+   *  batería en sus publicaciones. GLOBAL/COMPARTIDO entre todos los usuarios de TecnoFal
+   *  (tabla vendedores_bateria, sin filtro por usuario) — igual que tiposAviso. */
+  vendedoresBateria?: string[];
   online: boolean;
 }
 
@@ -139,6 +143,8 @@ export interface DataProvider {
     tipos: { clave: string; nombre: string }[],
     avisos: { marca: string; modelo: string; tipoClave: string; severidad: string; motivo: string | null }[],
   ): Promise<void>;
+  /** (opcional): publica vendedores conocidos por indicar el % de batería (global/compartido, aditivo) */
+  publicarVendedorBateria?(vendedores: string[]): Promise<void>;
   /**
    * Push de config local → espejo (opcional). ADITIVO Y SEGURO: solo hace upsert por clave
    * natural, NUNCA borra filas remotas, y salta cualquier sección local vacía (para que sea

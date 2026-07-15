@@ -15,6 +15,12 @@ const CSS = `
 }
 .tf-badge--provisional { opacity: .65; border: 1.5px dashed rgba(255,255,255,.9); }
 .tf-badge--sinDatos { background: #9ca3af !important; }
+.tf-bateria {
+  display: inline-flex; align-items: center; justify-content: center;
+  height: 18px; padding: 0 5px; margin-right: 6px;
+  border-radius: 9px; font: 700 11px/1 system-ui, sans-serif; color: #fff;
+  cursor: default; vertical-align: middle; box-sizing: border-box;
+}
 .tf-visto {
   display: inline-block; width: 7px; height: 7px; border-radius: 50%;
   background: #2563eb; margin-right: 4px; vertical-align: middle;
@@ -109,6 +115,8 @@ function tooltipDe(
   badge: Badge, provisional: boolean, bloqueos: string[] = [], alertas: string[] = [],
   vendedor?: { nombre: string | null; pctPositivo: number | null; totalVentas: number | null } | null,
   cantidadOfertas?: number | null,
+  bateriaPct?: number | null,
+  vendedorMuestraBateria?: boolean,
 ): string {
   const lineas: string[] = [];
   if (badge.margen == null) {
@@ -123,6 +131,8 @@ function tooltipDe(
   }
   lineas.push(...bloqueos.map((b) => `⛔ ${b}`));
   lineas.push(...alertas.slice(0, 3).map((a) => (a.startsWith('⚠') ? a : `⚠ ${a}`)));
+  if (bateriaPct != null) lineas.push(`🔋 Batería: ${bateriaPct}%`);
+  if (vendedorMuestraBateria) lineas.push('🔋 Vendedor conocido por indicar el % de batería');
   if (vendedor?.nombre) {
     const p = vendedor.pctPositivo != null ? `${vendedor.pctPositivo}%` : '?';
     const tot = vendedor.totalVentas != null ? ` (${vendedor.totalVentas})` : '';
@@ -139,8 +149,22 @@ function renderBadge(
   motivo?: string,
   bloqueos: string[] = [],
   alertas: string[] = [],
+  bateriaPct?: number | null,
+  vendedorMuestraBateria?: boolean,
 ) {
   item.el.classList.toggle('tf-item--visto', !!visto);
+
+  // % de batería — mini-badge visible, independiente del resultado de la evaluación
+  item.el.querySelector('.tf-bateria')?.remove();
+  if (bateriaPct != null) {
+    const umbral = PARAMETROS_ACTUALES?.bateriaPctUmbral ?? 70;
+    const chip = document.createElement('span');
+    chip.className = 'tf-bateria';
+    chip.textContent = `🔋${bateriaPct}%`;
+    chip.style.background = bateriaPct > umbral ? '#16a34a' : '#d97706';
+    chip.title = bateriaPct > umbral ? 'No hace falta cambiar la batería' : `≤${umbral}%: conviene presupuestar batería nueva`;
+    item.tituloEl.prepend(chip);
+  }
 
   // marca de "ya visto/guardado" — SIEMPRE, incluso cuando el badge queda en "?"
   item.el.querySelector('.tf-visto')?.remove();
@@ -194,7 +218,7 @@ function renderBadge(
   let tooltip = tooltipDe(
     badgeTooltip, provisional, bloqueos, alertas,
     { nombre: item.vendedor, pctPositivo: item.vendedorPctPositivo, totalVentas: item.vendedorTotalVentas },
-    item.cantidadOfertas,
+    item.cantidadOfertas, bateriaPct, vendedorMuestraBateria,
   );
   if (visto) tooltip += `\n👁 Ya visto (${visto.estado})`;
   el.title = tooltip;
@@ -206,6 +230,9 @@ function colorDeMargenSeguro(margen: number | null): string {
   if (!PARAMETROS_ACTUALES) return 'hsl(0, 0%, 60%)';
   return colorDeMargen(margen, PARAMETROS_ACTUALES);
 }
+
+// evita reenviar el mismo vendedor en cada re-render/scroll dentro de esta sesión de la pestaña
+const vendedoresBateriaNotificados = new Set<string>();
 
 function evaluarYPintar(item: Item, catalogo: Catalogo, vistos: Map<string, EstadoVisto>) {
   const visto = item.itemId ? vistos.get(item.itemId) : undefined;
@@ -220,8 +247,15 @@ function evaluarYPintar(item: Item, catalogo: Catalogo, vistos: Map<string, Esta
   renderBadge(
     item, badge, visto,
     resultado.margen == null ? resultado.advertencias[0] : undefined,
-    specs.bloqueos, specs.alertas,
+    specs.bloqueos, specs.alertas, specs.bateriaPct.valor, specs.vendedorMuestraBateria,
   );
+  if (specs.bateriaPct.valor != null && item.vendedor) {
+    const vNorm = item.vendedor.trim().toLowerCase();
+    if (vNorm && !vendedoresBateriaNotificados.has(vNorm)) {
+      vendedoresBateriaNotificados.add(vNorm);
+      void enviar({ tipo: 'vendedor:marcarBateria', vendedor: item.vendedor }).catch(() => {});
+    }
+  }
 }
 
 const idAItems = new Map<string, Item[]>();

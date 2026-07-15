@@ -159,6 +159,59 @@ describe('parser §5.1', () => {
     expect(parseListing(base, [], undefined, undefined, 'nuevo-vendedor', ['sam-74545']).bloqueos).toEqual([]);
   });
 
+  it('% de batería: inglés y español, confirmado, umbral default 70', () => {
+    const alto = parseListing('Dell Latitude 7490 i5-8350U 16GB RAM 512GB SSD Battery Health 87%', []);
+    expect(alto.bateriaPct).toEqual({ valor: 87, confianza: 'confirmado' });
+    expect(alto.bateriaIncluida.valor).toBe(true);
+    expect(alto.alertas.some((a) => a.includes('Batería al'))).toBe(false);
+
+    const bajo = parseListing('Dell Latitude 7490 i5-8350U 16GB RAM 512GB SSD Battery Health 55%', []);
+    expect(bajo.bateriaPct).toEqual({ valor: 55, confianza: 'confirmado' });
+    expect(bajo.bateriaIncluida.valor).toBe(false);
+    expect(bajo.alertas.some((a) => a.includes('Batería al 55%'))).toBe(true);
+
+    // orden invertido (número antes de la palabra)
+    const invertido = parseListing('Dell Latitude 7490 i5-8350U 16GB RAM 512GB SSD 92% battery', []);
+    expect(invertido.bateriaPct.valor).toBe(92);
+    expect(invertido.bateriaIncluida.valor).toBe(true);
+
+    // español
+    const esAlto = parseListing('Dell Latitude 7490 i5 16GB 512GB · Batería al 90%', []);
+    expect(esAlto.bateriaPct.valor).toBe(90);
+    expect(esAlto.bateriaIncluida.valor).toBe(true);
+    const esBajo = parseListing('Dell Latitude 7490 i5 16GB 512GB · 40% de batería', []);
+    expect(esBajo.bateriaPct.valor).toBe(40);
+    expect(esBajo.bateriaIncluida.valor).toBe(false);
+
+    // sin % explícito: se mantiene el comportamiento de keywords existente
+    const sinPct = parseListing('Dell Latitude 7490 i5-8350U 16GB RAM 512GB SSD battery good', []);
+    expect(sinPct.bateriaPct.valor).toBeNull();
+    expect(sinPct.bateriaIncluida.valor).toBe(true);
+  });
+
+  it('% de batería: umbral configurable, y "dead/missing" manda sobre el % aunque sea alto', () => {
+    const s = parseListing('Dell Latitude 7490 i5-8350U 16GB RAM 512GB SSD Battery Health 75%', [], undefined, undefined, undefined, undefined, undefined, 80);
+    expect(s.bateriaPct.valor).toBe(75);
+    expect(s.bateriaIncluida.valor).toBe(false); // 75% <= umbral custom (80)
+    expect(s.alertas.some((a) => a.includes('Batería al 75%'))).toBe(true);
+
+    const muerta = parseListing('Dell Latitude 7490 i5-8350U 16GB RAM 512GB SSD battery dead, Battery Health 95%', []);
+    expect(muerta.bateriaIncluida.valor).toBe(false);
+  });
+
+  it('vendedorMuestraBateria: true solo si el vendedor (normalizado) está en la lista global y no vacía', () => {
+    const base = 'Dell Latitude 7490 i5-8350U 16GB RAM 512GB SSD';
+    expect(parseListing(base, [], undefined, undefined, 'sam-74545', undefined, ['sam-74545']).vendedorMuestraBateria).toBe(true);
+    // normaliza trim+lowercase
+    expect(parseListing(base, [], undefined, undefined, 'Sam-74545 ', undefined, ['sam-74545']).vendedorMuestraBateria).toBe(true);
+    expect(parseListing(base, [], undefined, undefined, 'otro-vendedor', undefined, ['sam-74545']).vendedorMuestraBateria).toBe(false);
+    expect(parseListing(base, [], undefined, undefined, 'sam-74545', undefined, []).vendedorMuestraBateria).toBe(false);
+    expect(parseListing(base, [], undefined, undefined, 'sam-74545', undefined, undefined).vendedorMuestraBateria).toBe(false);
+    expect(parseListing(base, [], undefined, undefined, undefined, undefined, ['sam-74545']).vendedorMuestraBateria).toBe(false);
+    // no se mezcla con `alertas` (señal positiva aparte)
+    expect(parseListing(base, [], undefined, undefined, 'sam-74545', undefined, ['sam-74545']).alertas.some((a) => a.includes('batería'))).toBe(false);
+  });
+
   it('b) "No OS/No Batt/No HDD/No Power Cord" NUNCA bloquean — alimentan extras', () => {
     const s = parseListing('Lenovo ThinkPad T450 i5-5300U 8GB RAM No OS No Batt No HDD No Power Cord', []);
     expect(s.bloqueos).toEqual([]);

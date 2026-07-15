@@ -89,7 +89,10 @@ export function evaluarListado(
   metodo: MetodoEnvio = 'barco',
   vendedor?: string | null,
 ): EvaluacionRapida {
-  const specs = parseListing(titulo, catalogo.modelos, undefined, undefined, vendedor, catalogo.vendedoresConocidos);
+  const specs = parseListing(
+    titulo, catalogo.modelos, undefined, undefined, vendedor, catalogo.vendedoresConocidos,
+    catalogo.vendedoresBateria, catalogo.parametros.bateriaPctUmbral,
+  );
   const n = specs.cantidadLote && specs.cantidadLote > 1 ? specs.cantidadLote : 1;
   const extras = faltantesDe(specs, catalogo, n).reduce((s, f) => s + f.precio * f.cantidad, 0);
   const deducciones = deduccionesSugeridas(specs, catalogo).reduce((s, d) => s + d.monto * d.cantidad, 0);

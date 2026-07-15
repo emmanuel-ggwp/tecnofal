@@ -51,6 +51,14 @@ async function sincronizar(): Promise<void> {
         for (const a of avisosS) await local.marcarAvisoLimpio(a.id);
       } catch { /* reintento */ }
     }
+    // vendedores conocidos por indicar el % de batería (global/compartido, aditivo)
+    const bateriaS = await local.vendedoresBateriaSucios();
+    if (bateriaS.length > 0 && remoto.publicarVendedorBateria) {
+      try {
+        await remoto.publicarVendedorBateria(bateriaS.map((v) => v.nombre));
+        for (const v of bateriaS) await local.marcarVendedorBateriaLimpio(v.nombre);
+      } catch { /* reintento */ }
+    }
     // push de config local → espejo (aditivo: solo upsert, jamás borra; salta secciones vacías).
     // Va ANTES del pull: al subir y limpiar el flag, el pull deja de estar bloqueado y reconcilia.
     if ((await local.configDirty()) && remoto.guardarConfig) {
@@ -149,6 +157,11 @@ async function manejar(msg: Solicitud): Promise<unknown> {
 
     case 'detalle:crear': {
       await local.crearDetalle(msg.detalle);
+      void sincronizar();
+      return { ok: true };
+    }
+    case 'vendedor:marcarBateria': {
+      await local.marcarVendedorBateria(msg.vendedor);
       void sincronizar();
       return { ok: true };
     }

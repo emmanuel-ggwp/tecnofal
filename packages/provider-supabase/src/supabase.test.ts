@@ -95,6 +95,43 @@ describe('provider-supabase: catálogo (alimenta el pull que REEMPLAZA config lo
     expect(c).not.toBeNull();
     expect(c?.vendedoresConocidos).toEqual([]);
   });
+
+  it('vendedoresBateria: global/compartido — normaliza y deduplica, sin filtrar por usuario (mock trae "otro autor")', async () => {
+    cola.vendedores_bateria = [{ data: [{ vendedor: 'Sam-74545 ' }, { vendedor: 'sam-74545' }, { vendedor: 'otro-autor' }, { vendedor: null }] }];
+    const c = await p.cargarCatalogo();
+    expect(c?.vendedoresBateria).toEqual(['sam-74545', 'otro-autor']);
+  });
+
+  it('vendedoresBateria: error en la query auxiliar no tumba el catálogo (queda [])', async () => {
+    cola.vendedores_bateria = [{ error: { message: 'boom' } }];
+    const c = await p.cargarCatalogo();
+    expect(c).not.toBeNull();
+    expect(c?.vendedoresBateria).toEqual([]);
+  });
+
+  it('bateriaPctUmbral: mapea la fila de parametros; default 70 si no hay fila', async () => {
+    cola.parametros = [{ data: [{ clave: 'bateria_pct_umbral', valor: 80 }] }];
+    expect((await p.cargarCatalogo())?.parametros.bateriaPctUmbral).toBe(80);
+    const c2 = await p.cargarCatalogo();
+    expect(c2?.parametros.bateriaPctUmbral).toBe(70);
+  });
+});
+
+describe('provider-supabase: publicarVendedorBateria (push global/compartido, aditivo)', () => {
+  it('upsert con onConflict vendedor, ignoreDuplicates; no llama si la lista viene vacía', async () => {
+    await p.publicarVendedorBateria([]);
+    expect(llamadas.filter((l) => l.tabla === 'vendedores_bateria')).toHaveLength(0);
+
+    await p.publicarVendedorBateria(['sam-74545', 'otro']);
+    const up = llamadas.find((l) => l.tabla === 'vendedores_bateria' && l.op === 'upsert');
+    expect(up?.arg).toEqual([{ vendedor: 'sam-74545' }, { vendedor: 'otro' }]);
+    expect((up?.opts as { onConflict?: string })?.onConflict).toBe('vendedor');
+  });
+
+  it('error propaga: si el upsert falla → throw (el sync NO limpia el flag dirty)', async () => {
+    cola.vendedores_bateria = [{ error: { message: 'RLS: violates policy' } }];
+    await expect(p.publicarVendedorBateria(['sam-74545'])).rejects.toThrow(/violates/);
+  });
 });
 
 describe('provider-supabase: escrituras en la nube', () => {
@@ -145,7 +182,7 @@ function cat(over: Partial<Catalogo> = {}): Catalogo {
     parametros: {
       impuestoEbay: 1.07, seguroValorDeclarado: 0.02, seguroZoom: 3, comisionZinliEstimada: 0.05,
       costoRevision: 5, gananciaMinima: 0.5, gananciaDecente: 0.7,
-      tarifaBarcoPorPie3: null, tarifaAvionZoomPorKg: null, envioVzlaPorLaptop: 12,
+      tarifaBarcoPorPie3: null, tarifaAvionZoomPorKg: null, envioVzlaPorLaptop: 12, bateriaPctUmbral: 70,
     },
     precios: [{ cpuTipo: 'i5', genDesde: 8, genHasta: 9, precioBase: 220 }],
     ajustes: { ram_por_8gb: 15 },

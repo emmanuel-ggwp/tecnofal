@@ -47,6 +47,8 @@ export function parseListing(
   modeloForzado?: ModeloInfo | null,
   vendedor?: string | null,
   vendedoresConocidos?: string[],
+  vendedoresBateria?: string[],
+  bateriaPctUmbral = 70,
 ): SpecsParseadas {
   const t = texto;
   const td = textoDanos ?? texto;
@@ -128,6 +130,34 @@ export function parseListing(
   let bateriaIncluida = spec<boolean>(null, 'no_mencionado');
   if (/no\s+batt(?:ery)?\b|battery\s+(?:not\s+included|missing|removed|dead|bad)/i.test(t)) bateriaIncluida = spec(false, 'confirmado');
   else if (/battery\s+(?:included|good|great|holds|tested|health)/i.test(t)) bateriaIncluida = spec(true, 'confirmado');
+
+  // % de salud de batería (ej. "Battery Health 87%", "87% battery", "batería al 90%").
+  // Ventana acotada de 20 caracteres sin cruzar , . ; · ( ) — mismo criterio que SLOT_DISCO.
+  const BATERIA_PCT: RegExp[] = [
+    /batt(?:ery)?\b[^.,;:·|()!]{0,20}?\b(\d{1,3})\s*%/i,
+    /\b(\d{1,3})\s*%[^.,;:·|()!]{0,20}?\bbatt(?:ery)?\b/i,
+    /bater[ií]a\b[^.,;:·|()!]{0,20}?\b(\d{1,3})\s*%/i,
+    /\b(\d{1,3})\s*%[^.,;:·|()!]{0,20}?\bbater[ií]a\b/i,
+  ];
+  let bateriaPct = spec<number>(null, 'no_mencionado');
+  for (const re of BATERIA_PCT) {
+    const m = t.match(re);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (n >= 0 && n <= 100) { bateriaPct = spec(n, 'confirmado'); break; }
+    }
+  }
+  // el % explícito manda sobre el keyword genérico "health"/"good"/etc.: por encima del
+  // umbral no hace falta presupuestar batería nueva; por debajo, sí (aunque el título
+  // suene positivo) — a menos que ya viniera "dead/bad/missing" (eso manda siempre).
+  if (bateriaPct.valor != null && bateriaIncluida.valor !== false) {
+    if (bateriaPct.valor > bateriaPctUmbral) {
+      bateriaIncluida = spec(true, 'confirmado');
+    } else {
+      bateriaIncluida = spec(false, 'confirmado');
+      alertas.push(`🔋 Batería al ${bateriaPct.valor}% — ≤${bateriaPctUmbral}%: probablemente haga falta comprar batería nueva`);
+    }
+  }
 
   const sinOs = /no\s+(?:os|operating\s*system|windows)\b/i.test(t);
 
@@ -235,9 +265,17 @@ export function parseListing(
     }
   }
 
+  // Vendedor conocido (global/compartido, ver Catalogo.vendedoresBateria) por indicar el
+  // % de batería en sus publicaciones — señal de confianza, no se mezcla con `alertas`.
+  let vendedorMuestraBateria = false;
+  if (vendedor && vendedoresBateria && vendedoresBateria.length > 0) {
+    const vNorm = vendedor.trim().toLowerCase();
+    if (vNorm && vendedoresBateria.includes(vNorm)) vendedorMuestraBateria = true;
+  }
+
   return {
     cpuTipo, cpuGen, ramGb, ssdGb, esHdd,
-    pantallaPulgadas, pantallaTactil, cargadorIncluido, bateriaIncluida,
+    pantallaPulgadas, pantallaTactil, cargadorIncluido, bateriaIncluida, bateriaPct, vendedorMuestraBateria,
     sinOs, cantidadLote, detallesSugeridos, modeloDetectado, alertas, bloqueos,
   };
 }
