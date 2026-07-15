@@ -97,6 +97,7 @@ planes/                     → planes de ejecución por dominio + bitácoras (v
 
 ## CI y flujo de trabajo
 
+- **Regla de push (hook `pre-push` versionado en `.githooks/`): NO se hace push sin que pasen TODOS los tests.** El hook corre typecheck + lint + unit (vitest: core, provider-local, provider-supabase) + e2e web (Playwright `--workers=1`) y **aborta el push** si algo falla. Activación una vez por clon: `git config core.hooksPath .githooks`. Requiere el Supabase local arriba (para el e2e). Excluye el e2e de la extensión (misma exclusión que CI, ver abajo). Bypass de emergencia `git push --no-verify` (rompe la regla, desaconsejado).
 - Repo público `emmanuelmarcano/tecnofal` con branch protection en `main`: se mergea solo por PR con el check `full-suite` en verde (enforce_admins activo).
 - `ci-fast.yml` (push a ramas ≠ main): typecheck + unit tests de core y provider-local.
 - `ci-full.yml` (PR a main, check requerido): además build + suite Playwright completa de `apps/web` (`--workers=1`) contra un Supabase real en el runner. **Excluye a propósito** el e2e de la extensión (falla en Chromium headless del runner con extensiones cargadas — pendiente aparte, decisión del usuario) y la migración 0025.
