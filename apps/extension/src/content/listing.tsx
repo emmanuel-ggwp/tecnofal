@@ -59,9 +59,16 @@ function cantidadOfertasDePagina(): number | null {
   return m ? parseInt(m[1], 10) : null;
 }
 
-/** Tarjeta del vendedor: username + % feedback positivo + total de feedback/ventas. */
+/** Tarjeta del vendedor: username + % feedback positivo + total de feedback/ventas.
+ *  El username se saca del href del link (/str/<user> o /usr/<user>) — el texto visible acá
+ *  suele ser el nombre de tienda ("Bruin Computer Trading"), distinto del username que sí
+ *  muestra el grid de búsqueda ("bruincomputer"); sin esto, el mismo vendedor real nunca
+ *  matchea entre la página individual y el grid (avisos de "ya comprado"/batería rotos). */
 function vendedorDePagina(): { vendedor: string | null; vendedorPctPositivo: number | null; vendedorTotalVentas: number | null } {
-  const vendedor = texto('.x-sellercard-atf__about-seller-item--seller-name') || null;
+  const elVendedor = document.querySelector('.x-sellercard-atf__about-seller-item--seller-name');
+  const href = elVendedor?.querySelector('a')?.getAttribute('href') ?? '';
+  const usernameDeUrl = href.match(/\/(?:str|usr)\/([^/?]+)/)?.[1];
+  const vendedor = (usernameDeUrl ? decodeURIComponent(usernameDeUrl) : elVendedor?.textContent?.trim()) || null;
   const totalTxt = texto('[data-testid="x-sellercard-atf__about-seller"]');
   const total = totalTxt ? parseInt(totalTxt.replace(/[^\d]/g, ''), 10) : NaN;
   const vendedorTotalVentas = Number.isNaN(total) ? null : total;

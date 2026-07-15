@@ -141,18 +141,39 @@ test('búsqueda: countdown divergente ("Quedan 2h 15m") actualiza el fechaFinSub
   expect(finDespues - finAntes).toBeGreaterThan(60 * 60_000);
 });
 
-test('búsqueda: el tooltip del badge incluye vendedor y cantidad de ofertas (layout .s-card)', async () => {
+test('búsqueda: el tooltip del badge incluye avisos de vendedor curados (layout .s-card)', async () => {
   const page = await context.newPage();
   await page.goto('https://www.ebay.com/sch/i.html?_nkw=dell+latitude');
   await expect(page.locator('.tf-badge').first()).toBeVisible({ timeout: 20_000 });
-  const title = await page.locator('li.s-card .tf-badge').getAttribute('title');
-  expect(title).toContain('sam-74545');
-  expect(title).toContain('100% positivo');
-  expect(title).toContain('Ofertas: 33');
+  const title = await page.locator('li.s-card', { hasText: 'Latitude 5490' }).locator('.tf-badge').getAttribute('title');
+  // el nombre/%/ventas del vendedor en crudo ya no se muestra (commit 4e02880, "avisos de
+  // vendedor curados") — el tooltip debe reflejar el aviso curado en su lugar. Este vendedor
+  // (sam-74545, 4 ventas) dispara "Menos de 15 ventas"; 100% positivo y 33 ofertas no disparan
+  // ningún otro aviso (por encima de los umbrales de bloqueo/poca competencia).
+  expect(title).toContain('⚠ Menos de 15 ventas (4)');
+  expect(title).not.toContain('sam-74545');
+  await page.close();
+});
+
+test('búsqueda: vendedor con insignia "Top Rated Plus" (span de ícono + texto combinado con total abreviado "41.5K")', async () => {
+  // eBay no siempre separa nombre y "%positive (N)" en dos <span> — con la insignia "Top Rated
+  // Plus" antepone un <span> de ícono vacío y junta todo en un solo <span> de texto, con el
+  // total a veces abreviado ("41.5K"). vendedorDeCard() no debe asumir spans[0]/spans[1] fijos.
+  const page = await context.newPage();
+  await page.goto('https://www.ebay.com/sch/i.html?_nkw=dell+latitude');
+  await expect(page.locator('.tf-badge').first()).toBeVisible({ timeout: 20_000 });
+  const title = await page.locator('li.s-card', { hasText: 'Latitude 5410' }).locator('.tf-badge').getAttribute('title');
+  // 65% positivo (bajo el umbral de 80%) solo aparece si vendedorPctPositivo se parseó bien
+  // pese al layout con ícono + span combinado — si la extracción fallara, no habría aviso.
+  expect(title).toContain('65% positivo — debajo de 80%');
+  expect(title).not.toContain('bruincomputer');
   await page.close();
 });
 
 test('listing: vendedor y cantidad de ofertas se scrapean y persisten', async () => {
+  // el fixture muestra "Sam's Compu Trading" (nombre de tienda) pero el href del link es
+  // /str/sam-74545 — debe guardarse "sam-74545" (username), no el nombre de tienda, para
+  // matchear con lo que scrapea el grid de búsqueda del mismo vendedor.
   const page = await context.newPage();
   await page.goto('https://www.ebay.com/itm/777777777777');
   await expect(page.locator('#tecnofal-panel-host')).toBeAttached({ timeout: 20_000 });
@@ -178,13 +199,18 @@ test('listing: la descripción del iframe cross-origin (ebaydesc.com) alimenta "
   await page.close();
 });
 
-test('listing: el panel muestra el vendedor', async () => {
+test('listing: el panel muestra los avisos de vendedor curados, nunca el nombre/%/ventas en crudo', async () => {
   const page = await context.newPage();
   await page.goto('https://www.ebay.com/itm/888888888888');
   const panel = page.locator('#tecnofal-panel-host');
   await expect(panel).toBeAttached({ timeout: 20_000 });
+  // este vendedor del fixture (sam-74545, 4 ventas, 100% positivo, 0 ofertas) dispara dos avisos
+  // curados — Panel.tsx nunca muestra el nombre en crudo (ver comentario junto a avisosVendedor:
+  // "avisos curados sobre el vendedor (nunca se muestra nombre/%/ventas en crudo)").
+  await expect(panel.getByText('Menos de 15 ventas', { exact: false })).toBeVisible();
+  await expect(panel.getByText('poca competencia', { exact: false })).toBeVisible();
   // "sam-74545" también aparece en la página cruda (fixture) fuera del panel — acotar al shadow host
-  await expect(panel.getByText('sam-74545', { exact: false })).toBeVisible();
+  await expect(panel.getByText('sam-74545', { exact: false })).not.toBeVisible();
   await page.close();
 });
 

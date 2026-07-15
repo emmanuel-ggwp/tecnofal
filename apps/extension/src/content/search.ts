@@ -26,16 +26,31 @@ interface Item extends ItemOverlay {
 
 /** Tarjeta del vendedor: SOLO vive en .su-card-container__attributes__secondary — la tarjeta
  *  tiene VARIAS .s-card__attribute-row (precio, ofertas+tiempo, "or Best Offer", envío,
- *  ubicación) en __primary, así que hay que acotar o se agarra la fila equivocada (el precio). */
+ *  ubicación) en __primary, así que hay que acotar o se agarra la fila equivocada (el precio).
+ *
+ *  eBay no es consistente con el layout interno de esta fila: a veces separa "vendedor" y
+ *  "%positive (N)" en dos <span>, a veces los junta en uno solo (vendedores con insignia
+ *  "Top Rated Plus" traen un <span> de ícono vacío ANTES del texto combinado). Por eso no se
+ *  asume posición fija (spans[0]/spans[1]): se concatena el texto de todos los spans no vacíos
+ *  y se parsea con una sola regex. El total de ventas también admite formato abreviado
+ *  ("41.5K"/"1.2M"), no solo el número completo. */
 function vendedorDeCard(el: Element): { vendedor: string | null; vendedorPctPositivo: number | null; vendedorTotalVentas: number | null; filaEl: Element | null } {
   const fila = el.querySelector('.su-card-container__attributes__secondary .s-card__attribute-row');
-  const spans = fila ? [...fila.querySelectorAll('span')] : [];
-  // cubre tanto "100% positive (9)" como "0% positive (0)" — mismo patrón, sin caso especial
-  const m = spans[1]?.textContent?.match(/(\d+(?:\.\d+)?)\s*%\s*positive\s*\((\d+)\)/i);
+  const texto = fila
+    ? [...fila.querySelectorAll('span')].map((s) => s.textContent?.trim()).filter(Boolean).join(' ')
+    : '';
+  // cubre "100% positive (9)", "0% positive (0)" y "99.8% positive (41.5K)"
+  const m = texto.match(/^(.*?)\s+(\d+(?:\.\d+)?)\s*%\s*positive\s*\(([\d.,]+)\s*([km]?)\)/i);
+  let vendedorTotalVentas: number | null = null;
+  if (m) {
+    const n = parseFloat(m[3].replace(/,/g, ''));
+    const mult = m[4]?.toLowerCase() === 'k' ? 1_000 : m[4]?.toLowerCase() === 'm' ? 1_000_000 : 1;
+    vendedorTotalVentas = Number.isNaN(n) ? null : Math.round(n * mult);
+  }
   return {
-    vendedor: spans[0]?.textContent?.trim() || null,
-    vendedorPctPositivo: m ? parseFloat(m[1]) : null,
-    vendedorTotalVentas: m ? parseInt(m[2], 10) : null,
+    vendedor: (m ? m[1].trim() : texto) || null,
+    vendedorPctPositivo: m ? parseFloat(m[2]) : null,
+    vendedorTotalVentas,
     filaEl: fila,
   };
 }
