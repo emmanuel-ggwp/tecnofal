@@ -29,9 +29,13 @@ npm run build && npx playwright install chromium
 npm run test:e2e -w @tecnofal/extension
 
 # Supabase local (Docker Desktop corriendo; puertos 553xx — conviven con "patriona" en 543xx)
-npx supabase start                           # API 55321, DB 55322, Studio 55323
-npx supabase db reset                        # re-aplica supabase/migrations
+# `supabase start` / `db reset` operan sobre la base compartida `postgres`: solo el mantenedor /
+# arranque inicial. Los AGENTES no los usan (ver "Aislamiento de BD por agente" abajo).
+npx supabase start                           # API 55321, DB 55322, Studio 55323 (arranque del stack)
 scripts/test-sql.sh                          # pruebas SQL de RPCs/vistas (rollback, no deja rastro)
+scripts/db-plantilla.sh                      # (re)construye el template `plantilla` (todas las migraciones)
+scripts/db-agente.sh <tarea>                 # clona agente_<tarea> del template para tu trabajo aislado
+scripts/db-agente.sh <tarea> --drop          # elimínala al terminar
 
 # Panel web
 cp apps/web/.env.local.example apps/web/.env.local   # claves demo del CLI, ya correctas
@@ -43,6 +47,20 @@ bunx playwright test --workers=1             # suite COMPLETA: SIEMPRE en serie
 ```
 
 **Por qué `--workers=1` en la suite web completa:** varios specs en paralelo contienden contra el único servidor `next dev` (compila rutas bajo demanda) y 2 pruebas fallan de forma reproducible. No es bug de datos ni de RPCs. Aplica también a `--repeat-each` de un mismo spec.
+
+## Aislamiento de BD por agente
+
+**NUNCA trabajes sobre la base `postgres` del Supabase local** (contenedor `supabase_db_tecnofal`, puerto 55322): es el entorno compartido del que dependen otros agentes, la CI y el stack HTTP. Para **cualquier cambio de esquema o dato de prueba** clona tu propia base y usa SOLO esa:
+
+```bash
+scripts/db-agente.sh mi_tarea        # crea agente_mi_tarea (clon del template `plantilla`)
+docker exec -i supabase_db_tecnofal psql -U postgres -d agente_mi_tarea -f mi_prueba.sql
+scripts/db-agente.sh mi_tarea --drop # al terminar
+```
+
+- **`plantilla`** es el template canónico: se reconstruye con `scripts/db-plantilla.sh` desde el esquema base (schema `auth`, solo estructura) + `supabase/migrations/` en orden, **excluyendo la 0025** (no autorizada, igual que CI). Refleja las migraciones **del checkout actual**; si tu rama trae migraciones nuevas, reconstrúyelo (o apunta `MIGRATIONS_DIR=` a otra carpeta). Clonar es instantáneo (`CREATE DATABASE … TEMPLATE plantilla`).
+- **Prohibido para agentes:** `supabase db reset` / `supabase migration up` (mutan `postgres`), `supabase start` y levantar contenedores Postgres nuevos. Si un cambio de esquema debe persistir, NO lo apliques a `postgres`: genera el archivo en `supabase/migrations/` y déjalo para revisión.
+- **Alcance:** este aislamiento sirve para trabajo **SQL** (migraciones, RPCs, vistas — p. ej. `scripts/test-sql.sh`). **NO** para la suite e2e/web: PostgREST está fijado a la base `postgres` (`PGRST_DB_URI=…/postgres`), así que Playwright corre contra el stack compartido, no contra una base de agente.
 
 ## Arquitectura
 
