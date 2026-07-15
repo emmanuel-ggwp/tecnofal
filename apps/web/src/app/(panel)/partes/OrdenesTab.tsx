@@ -83,6 +83,7 @@ export function OrdenesTab() {
       ) : (
         <Tabla
           encabezados={['Fecha', 'Origen', 'Fuente', 'Envío USA', 'Fees', 'Ítems', 'Estado', '']}
+          paginado
           claves={ordenes.map((o) => o.id)}
           filas={ordenes.map((o) => [
             <FechaCorta key="fecha" fecha={o.fecha} />,

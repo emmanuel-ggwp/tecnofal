@@ -134,6 +134,7 @@ export function ListadoVentas() {
         filas={cargando ? [] : filas}
         claves={ventas.map((v) => v.id)}
         vacio={cargando ? 'Cargando…' : 'Sin ventas'}
+        paginado
       />
 
       <RegistrarVentaModal

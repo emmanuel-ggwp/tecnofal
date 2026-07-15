@@ -1,0 +1,60 @@
+#!/bin/sh
+# ─────────────────────────────────────────────────────────────────────────────
+# Regla del proyecto: NO se hace push si no pasan TODOS los tests.
+# Este hook bloquea el `git push` (exit != 0) si falla cualquier etapa.
+#
+# Corre lo mismo que gatea CI (typecheck + lint + unit vitest + e2e web Playwright).
+# EXCLUYE a propósito el e2e de la extensión (`test:e2e -w @tecnofal/extension`): falla en
+# Chromium headless con extensiones cargadas — misma exclusión que ci-full.yml (ver CLAUDE.md).
+#
+# POSIX sh (sin bashismos): clientes GUI como GitHub Desktop ejecutan los hooks con sh, no bash.
+# Activación (una vez por clon):  git config core.hooksPath .githooks
+# Bypass de emergencia (rompe la regla, desaconsejado):  git push --no-verify
+# ─────────────────────────────────────────────────────────────────────────────
+set -eu
+
+cd "$(git rev-parse --show-toplevel)"
+
+fallo() {
+  echo "" >&2
+  echo "✗ pre-push: '$1' falló — push ABORTADO. Arréglalo (o, solo en emergencia, git push --no-verify)." >&2
+  exit 1
+}
+
+# Verifica que las herramientas del toolchain estén en el PATH (los clientes GUI a veces no las
+# tienen). Si falta alguna, aborta con instrucción clara en vez de un críptico "command not found".
+for cmd in npm bunx docker; do
+  command -v "$cmd" >/dev/null 2>&1 || {
+    echo "✗ pre-push: '$cmd' no está en el PATH de este entorno." >&2
+    echo "  Los hooks de clientes GUI (GitHub Desktop) corren con un PATH mínimo." >&2
+    echo "  Haz el push desde una terminal con el entorno de dev cargado, o usa 'git push --no-verify' (rompe la regla)." >&2
+    exit 1
+  }
+done
+
+echo "▶ [1/5] typecheck (core + providers + extension)"
+npm run typecheck || fallo "typecheck"
+echo "▶ [1/5b] typecheck apps/web"
+( cd apps/web && bunx tsc --noEmit ) || fallo "typecheck apps/web"
+
+echo "▶ [2/5] lint (regla 21)"
+npm run lint || fallo "lint"
+
+echo "▶ [3/5] unit tests — core"
+npm run test -w @tecnofal/core || fallo "unit core"
+echo "▶ [3/5b] unit tests — provider-local"
+npm run test -w @tecnofal/provider-local || fallo "unit provider-local"
+echo "▶ [3/5c] unit tests — provider-supabase"
+npm run test -w @tecnofal/provider-supabase || fallo "unit provider-supabase"
+
+echo "▶ [4/5] verificar Supabase local (necesario para el e2e web)"
+if ! docker ps --format '{{.Names}}' | grep -q '^supabase_db_tecnofal$'; then
+  echo "✗ pre-push: Supabase local no está arriba (contenedor supabase_db_tecnofal)." >&2
+  echo "  Arráncalo con 'npx supabase start' y reintenta el push." >&2
+  exit 1
+fi
+
+echo "▶ [5/5] e2e web (Playwright, suite completa --workers=1)"
+( cd apps/web && bunx playwright test --workers=1 ) || fallo "e2e web"
+
+echo "✓ pre-push: todos los tests pasaron — push permitido."

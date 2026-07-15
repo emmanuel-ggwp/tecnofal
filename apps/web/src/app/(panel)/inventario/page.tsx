@@ -216,6 +216,7 @@ function InventarioPageInterno() {
           filas={filas}
           claves={laptops.map((l) => l.id)}
           vacio={cargando ? 'Cargando…' : 'Sin laptops que coincidan con los filtros'}
+          paginado
         />
       </div>
     </section>

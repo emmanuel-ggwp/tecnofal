@@ -464,6 +464,7 @@ export default function CuentasPage() {
         <h2 className="mb-2 text-lg font-semibold">Conversiones</h2>
         <Tabla
           encabezados={['Fecha', 'Origen', 'Destino', 'Monto origen', 'Monto destino', 'Tasa implícita', 'Nota']}
+          paginado
           claves={conversiones.map((c) => c.id)}
           filas={conversiones.map((c) => [
             <FechaCorta key="f" fecha={c.fecha} />,

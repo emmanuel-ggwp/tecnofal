@@ -157,6 +157,7 @@ export default function ListingsPage() {
           filas={filas}
           claves={listings.map((l) => l.id)}
           vacio={cargando ? 'Cargando…' : 'Sin listings que coincidan con los filtros'}
+          paginado
         />
       </div>
 

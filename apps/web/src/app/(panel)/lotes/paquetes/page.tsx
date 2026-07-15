@@ -97,6 +97,7 @@ export default function PaquetesPage() {
       ) : (
         <Tabla
           encabezados={['Courier', 'Guía', 'Método', 'Estado', 'Recibido']}
+          paginado
           claves={paquetes.map((p) => p.id)}
           filas={paquetes.map((p) => [
             <Link key="c" href={`/lotes/paquetes/${p.id}`} data-testid={`paquete-link-${p.id}`} className="underline">

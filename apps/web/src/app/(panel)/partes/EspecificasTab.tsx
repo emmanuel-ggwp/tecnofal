@@ -116,6 +116,7 @@ export function EspecificasTab() {
       ) : (
         <Tabla
           encabezados={['Parte', 'Identificador', 'Costo', 'Origen', 'Asignada a', '']}
+          paginado
           claves={especificas.map((e) => e.id)}
           filas={especificas.map((e) => [
             e.parteNombre,

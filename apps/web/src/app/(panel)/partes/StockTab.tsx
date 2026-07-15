@@ -66,6 +66,7 @@ export function StockTab() {
       ) : (
         <Tabla
           encabezados={['Parte', 'Cantidad', 'Costo promedio', 'Valor total', 'Compra rápida', '']}
+          paginado
           claves={filas.map((f) => f.parteId)}
           filas={filas.map((f) => [
             f.parteNombre,
