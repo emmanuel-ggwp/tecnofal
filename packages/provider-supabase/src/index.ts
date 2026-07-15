@@ -201,6 +201,7 @@ export class ProveedorSupabase implements Proveedor {
       .insert({
         origen: 'ebay',
         url_ebay: d.listing.url,
+        vendedor: d.listing.vendedor ?? null,
         precio_subasta: d.listing.precioVisto,
         envio_usa: d.envioUsa,
         costo_proyectado_total: proyectadoDeCompra(d),

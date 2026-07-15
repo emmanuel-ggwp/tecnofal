@@ -153,6 +153,13 @@ describe('provider-supabase: escrituras en la nube', () => {
     expect(up.lote_id).toBe('L1');
   });
 
+  it('comprar: el lote guarda el vendedor scrapeado (alimenta "Ya le has comprado antes")', async () => {
+    cola.lotes = [{ data: { id: 'L1' } }];
+    await p.comprar({ ...compra(), listing: { ...listing('777'), vendedor: 'Sam-74545' } });
+    const insLote = llamadas.find((l) => l.tabla === 'lotes' && l.op === 'insert')?.arg as { vendedor: string | null };
+    expect(insLote.vendedor).toBe('Sam-74545');
+  });
+
   it('guardarListing propaga el error (el sync NO debe marcarlo limpio)', async () => {
     cola.listings = [{ error: { message: 'JWT expired' } }];
     await expect(p.guardarListing(listing('888'))).rejects.toThrow(/expired/);

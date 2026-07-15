@@ -1382,7 +1382,17 @@ export function Panel(p: PanelProps) {
               pantallaPulgadas: cantidad === 1 ? pulgadas : null, pantallaTactil: tactil,
               valorEsperado: r.valorEsperado, cadena: r.cadena,
             },
-          }), 'Lote creado con estimado congelado ✓', () => setEstadoActual('comprado'))}>
+          }), 'Lote creado con estimado congelado ✓', () => {
+            setEstadoActual('comprado');
+            // optimista: "Ya le has comprado antes" ya en este mismo listado, sin esperar
+            // a que el servidor recompute vendedoresConocidos y sincronice de vuelta
+            const vNorm = p.vendedor?.trim().toLowerCase();
+            if (vNorm) {
+              setCatalogo((c) => (c.vendedoresConocidos?.includes(vNorm)
+                ? c
+                : { ...c, vendedoresConocidos: [...(c.vendedoresConocidos ?? []), vNorm] }));
+            }
+          })}>
           Comprada
         </button>
       </div>
