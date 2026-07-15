@@ -35,6 +35,13 @@ vi.mock('@supabase/supabase-js', () => ({
       signOut: async () => ({}),
     },
     from: (t: string) => builder(t),
+    // registrar_compra_lote (0022+0031): crea lote+líneas+laptops atómicamente y de forma
+    // idempotente. Devuelve directamente una promesa a { data: loteId, error }.
+    rpc: (fn: string, args?: unknown) => {
+      llamadas.push({ tabla: `rpc:${fn}`, op: 'rpc', arg: args });
+      const r = cola[`rpc:${fn}`]?.shift() ?? { data: null, error: null };
+      return Promise.resolve({ data: r.data ?? null, error: r.error ?? null });
+    },
   }),
 }));
 
@@ -135,29 +142,34 @@ describe('provider-supabase: publicarVendedorBateria (push global/compartido, ad
 });
 
 describe('provider-supabase: escrituras en la nube', () => {
-  it('comprar: si falla el lote → throw y NO inserta laptops ni líneas ni listing', async () => {
-    cola.lotes = [{ error: { message: 'RLS: new row violates policy' } }];
+  it('comprar: si falla el RPC del lote → throw y NO marca el listing como comprado', async () => {
+    // lote+líneas+laptops son atómicos dentro del RPC: si falla, no queda nada a medias
+    // y el listing JAMÁS debe quedar "comprado" (si no, se ve comprado sin lote real).
+    cola['rpc:registrar_compra_lote'] = [{ error: { message: 'RLS: new row violates policy' } }];
     await expect(p.comprar(compra())).rejects.toThrow(/violates/);
-    expect(llamadas.filter((l) => l.tabla === 'laptops' || l.tabla === 'costo_lineas')).toHaveLength(0);
     expect(llamadas.filter((l) => l.tabla === 'listings' && l.op === 'upsert')).toHaveLength(0);
   });
 
-  it('comprar feliz: lote → laptops → costo_lineas → listing queda "comprado" con lote_id', async () => {
-    cola.lotes = [{ data: { id: 'L1' } }];
-    const { loteId } = await p.comprar(compra());
+  it('comprar feliz: RPC atómico → listing queda "comprado" con lote_id; reenvía la clave de idempotencia', async () => {
+    cola['rpc:registrar_compra_lote'] = [{ data: 'L1' }];
+    const { loteId } = await p.comprar(compra(), 'idem-123');
     expect(loteId).toBe('L1');
+    // un solo RPC crea todo; la única escritura vía .from() es el upsert del listing
+    const rpc = llamadas.find((l) => l.tabla === 'rpc:registrar_compra_lote')?.arg as { p_idempotency_key: string };
+    expect(rpc.p_idempotency_key).toBe('idem-123'); // la clave viaja al servidor
     const tablasEscritas = llamadas.filter((l) => ['insert', 'upsert'].includes(l.op)).map((l) => l.tabla);
-    expect(tablasEscritas).toEqual(['lotes', 'laptops', 'costo_lineas', 'listings']);
+    expect(tablasEscritas).toEqual(['listings']);
     const up = llamadas.find((l) => l.tabla === 'listings' && l.op === 'upsert')?.arg as { estado: string; lote_id: string };
     expect(up.estado).toBe('comprado');
     expect(up.lote_id).toBe('L1');
   });
 
   it('comprar: el lote guarda el vendedor scrapeado (alimenta "Ya le has comprado antes")', async () => {
-    cola.lotes = [{ data: { id: 'L1' } }];
+    cola['rpc:registrar_compra_lote'] = [{ data: 'L1' }];
     await p.comprar({ ...compra(), listing: { ...listing('777'), vendedor: 'Sam-74545' } });
-    const insLote = llamadas.find((l) => l.tabla === 'lotes' && l.op === 'insert')?.arg as { vendedor: string | null };
-    expect(insLote.vendedor).toBe('Sam-74545');
+    // el lote se crea dentro del RPC atómico: el vendedor viaja en p_lote
+    const rpc = llamadas.find((l) => l.tabla === 'rpc:registrar_compra_lote')?.arg as { p_lote: { vendedor: string | null } };
+    expect(rpc.p_lote.vendedor).toBe('Sam-74545');
   });
 
   it('guardarListing propaga el error (el sync NO debe marcarlo limpio)', async () => {
@@ -165,19 +177,20 @@ describe('provider-supabase: escrituras en la nube', () => {
     await expect(p.guardarListing(listing('888'))).rejects.toThrow(/expired/);
   });
 
-  it('registrarConversion: dos movimientos + conversión enlazada, tasa exacta', async () => {
-    cola.movimientos = [{ data: [{ id: 'mo1' }, { id: 'mo2' }] }];
+  it('registrarConversion: RPC atómico registrar_conversion, tasa exacta', async () => {
+    cola['rpc:registrar_conversion'] = [{ data: 'CV1' }];
     const r = await p.registrarConversion({ cuentaOrigenId: 'a', cuentaDestinoId: 'b', montoOrigen: 100, montoDestino: 98 });
     expect(r.tasaImplicita).toBeCloseTo(100 / 98);
-    const conv = llamadas.find((l) => l.tabla === 'conversiones' && l.op === 'insert')?.arg as { movimiento_origen_id: string; movimiento_destino_id: string };
-    expect(conv.movimiento_origen_id).toBe('mo1');
-    expect(conv.movimiento_destino_id).toBe('mo2');
+    // Un solo RPC atómico; nunca inserts sueltos a movimientos/conversiones (evita huérfanos).
+    const rpc = llamadas.find((l) => l.tabla === 'rpc:registrar_conversion')?.arg as { p_cuenta_origen: string; p_cuenta_destino: string };
+    expect(rpc.p_cuenta_origen).toBe('a');
+    expect(rpc.p_cuenta_destino).toBe('b');
+    expect(llamadas.filter((l) => (l.tabla === 'movimientos' || l.tabla === 'conversiones') && l.op === 'insert')).toHaveLength(0);
   });
 
-  it('registrarConversion: si fallan los movimientos → throw sin tocar conversiones', async () => {
-    cola.movimientos = [{ error: { message: 'RLS' } }];
+  it('registrarConversion: si falla el RPC → throw', async () => {
+    cola['rpc:registrar_conversion'] = [{ error: { message: 'RLS' } }];
     await expect(p.registrarConversion({ cuentaOrigenId: 'a', cuentaDestinoId: 'b', montoOrigen: 100, montoDestino: 98 })).rejects.toThrow();
-    expect(llamadas.filter((l) => l.tabla === 'conversiones')).toHaveLength(0);
   });
 });
 

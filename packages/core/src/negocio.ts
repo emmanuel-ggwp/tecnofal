@@ -135,7 +135,9 @@ export interface DataProvider {
   cargarCatalogo(): Promise<Catalogo | null>;
   checkListings(ids: string[]): Promise<EstadoVisto[]>;
   guardarListing(l: ListingGuardar): Promise<void>;
-  comprar(d: CompraDatos): Promise<{ loteId: string }>;
+  /** idempotencyKey (opcional): clave estable entre reintentos para que el espejo no
+   *  duplique el lote si la misma compra se reenvía (re-push tras muerte del SW, retry manual). */
+  comprar(d: CompraDatos, idempotencyKey?: string): Promise<{ loteId: string }>;
   listarCuentas(): Promise<Cuenta[]>;
   registrarConversion(d: ConversionDatos): Promise<{ tasaImplicita: number }>;
   /** §23 (opcional): publica tipos y avisos de modelo al espejo (globales/compartidos) */

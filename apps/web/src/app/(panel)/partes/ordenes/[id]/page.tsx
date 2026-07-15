@@ -36,6 +36,7 @@ export default function OrdenDetallePage() {
   const [nuevoPrecio, setNuevoPrecio] = useState('');
 
   const [manuales, setManuales] = useState<Record<string, string>>({});
+  const [recibiendo, setRecibiendo] = useState(false);
 
   async function cargar() {
     setCargando(true);
@@ -91,12 +92,16 @@ export default function OrdenDetallePage() {
   }
 
   async function recibir() {
+    if (recibiendo) return; // guard de reentrada; el RPC además es idempotente por ítem (0032)
     setError(null);
+    setRecibiendo(true);
     try {
       await recibirOrden(ordenId);
       await cargar();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error al recibir la orden');
+    } finally {
+      setRecibiendo(false);
     }
   }
 
@@ -120,7 +125,7 @@ export default function OrdenDetallePage() {
         <Boton onClick={prorratear} disabled={orden.recibida}>
           Prorratear
         </Boton>
-        <Boton onClick={recibir} disabled={orden.recibida || items.length === 0}>
+        <Boton onClick={recibir} disabled={orden.recibida || items.length === 0 || recibiendo}>
           Recibir
         </Boton>
       </div>

@@ -103,6 +103,7 @@ export function RegistrarVentaModal({ abierto, onCerrar, onRegistrada }: Registr
     if (compradorModo === 'nuevo' && !nombreNuevo.trim()) return setError('El nombre del comprador es obligatorio.');
     if (!cuentaId) return setError('Selecciona la cuenta destino.');
     if (precioCalculado == null || precioCalculado <= 0) return setError('El precio de venta debe ser mayor a 0.');
+    if (guardando) return; // guard de reentrada: evita crear un comprador nuevo duplicado por doble-submit
 
     setGuardando(true);
     try {

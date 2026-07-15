@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Boton } from '@/ui/Boton';
 import { Campo } from '@/ui/Campo';
 import { Chip } from '@/ui/Chip';
@@ -38,6 +38,8 @@ export default function PaqueteDetallePage() {
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [guardando, setGuardando] = useState(false);
+  const reqKeyParte = useRef<string | null>(null);
+  const reqKeyPersonal = useRef<string | null>(null);
 
   const [laptopSel, setLaptopSel] = useState('');
   const [laptopVol, setLaptopVol] = useState('');
@@ -98,10 +100,12 @@ export default function PaqueteDetallePage() {
   }
 
   async function agregarParte() {
-    if (!parteDesc) return;
+    if (!parteDesc || guardando) return;
+    if (!reqKeyParte.current) reqKeyParte.current = crypto.randomUUID();
     setGuardando(true);
     try {
-      await agregarItemParte(paqueteId, parteDesc, Number(parteVol || 0), Number(parteVal || 0));
+      await agregarItemParte(paqueteId, parteDesc, Number(parteVol || 0), Number(parteVal || 0), reqKeyParte.current);
+      reqKeyParte.current = null;
       setParteDesc('');
       setParteVol('');
       setParteVal('');
@@ -114,10 +118,12 @@ export default function PaqueteDetallePage() {
   }
 
   async function agregarPersonal() {
-    if (!personalDesc) return;
+    if (!personalDesc || guardando) return;
+    if (!reqKeyPersonal.current) reqKeyPersonal.current = crypto.randomUUID();
     setGuardando(true);
     try {
-      await agregarItemPersonal(paqueteId, personalDesc, Number(personalVol || 0), Number(personalVal || 0));
+      await agregarItemPersonal(paqueteId, personalDesc, Number(personalVol || 0), Number(personalVal || 0), reqKeyPersonal.current);
+      reqKeyPersonal.current = null;
       setPersonalDesc('');
       setPersonalVol('');
       setPersonalVal('');

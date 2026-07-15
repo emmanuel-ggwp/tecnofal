@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   evaluar,
@@ -83,6 +83,9 @@ export default function CalculadoraPage() {
   const [modalAbierto, setModalAbierto] = useState(false);
   const [guardando, setGuardando] = useState(false);
   const [loteCreadoId, setLoteCreadoId] = useState<string | null>(null);
+  // Clave de idempotencia por conversión: se reusa si el usuario reintenta tras un error;
+  // se limpia al tener éxito. Evita que el RPC (no idempotente) duplique el lote.
+  const reqKeyLote = useRef<string | null>(null);
 
   useEffect(() => {
     cargarConfiguracion()
@@ -172,6 +175,8 @@ export default function CalculadoraPage() {
 
   async function onConfirmarLote() {
     if (!resultado) return;
+    if (guardando) return; // guard de reentrada: el RPC no es idempotente, un doble-submit duplica el lote
+    if (!reqKeyLote.current) reqKeyLote.current = crypto.randomUUID();
     setGuardando(true);
     try {
       const { loteId } = await crearLote({
@@ -180,7 +185,9 @@ export default function CalculadoraPage() {
         titulo: form.titulo || 'Lote desde calculadora',
         url: form.urlEbay || null,
         faltantes,
+        idempotencyKey: reqKeyLote.current,
       });
+      reqKeyLote.current = null; // éxito → la próxima conversión usa clave nueva
       setLoteCreadoId(loteId);
     } catch (e: unknown) {
       setToast(`Error al convertir en lote: ${e instanceof Error ? e.message : String(e)}`);

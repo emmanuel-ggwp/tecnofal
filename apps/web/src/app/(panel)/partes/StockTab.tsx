@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Boton } from '@/ui/Boton';
 import { Campo } from '@/ui/Campo';
 import { Dinero } from '@/ui/Dinero';
@@ -14,6 +14,10 @@ export function StockTab() {
   const [error, setError] = useState<string | null>(null);
   const [compra, setCompra] = useState<Record<string, { cantidad: string; costo: string }>>({});
   const [parteAInstalar, setParteAInstalar] = useState<ParteAInstalar | null>(null);
+  // Compra rápida en curso por parte + clave de idempotencia reusada entre reintentos.
+  // Un doble-insert dispara trg_partes_promedio 2× y corrompe el promedio (0032).
+  const [comprando, setComprando] = useState<Record<string, boolean>>({});
+  const reqKeyCompra = useRef<Record<string, string>>({});
 
   async function cargar() {
     setCargando(true);
@@ -35,14 +39,20 @@ export function StockTab() {
   }
 
   async function comprar(parteId: string) {
+    if (comprando[parteId]) return; // guard de reentrada: el trigger corrompe el promedio si se duplica
     setError(null);
     const { cantidad, costo } = campoCompra(parteId);
+    if (!reqKeyCompra.current[parteId]) reqKeyCompra.current[parteId] = crypto.randomUUID();
+    setComprando((c) => ({ ...c, [parteId]: true }));
     try {
-      await registrarCompraStock(parteId, Number(cantidad), Number(costo));
+      await registrarCompraStock(parteId, Number(cantidad), Number(costo), undefined, reqKeyCompra.current[parteId]);
+      delete reqKeyCompra.current[parteId]; // éxito → la próxima compra usa clave nueva
       setCompra({ ...compra, [parteId]: { cantidad: '', costo: '' } });
       await cargar();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error al registrar la compra');
+    } finally {
+      setComprando((c) => ({ ...c, [parteId]: false }));
     }
   }
 
@@ -81,7 +91,7 @@ export function StockTab() {
               <Boton
                 variante="secundario"
                 onClick={() => comprar(f.parteId)}
-                disabled={!campoCompra(f.parteId).cantidad || !campoCompra(f.parteId).costo}
+                disabled={!campoCompra(f.parteId).cantidad || !campoCompra(f.parteId).costo || !!comprando[f.parteId]}
               >
                 Comprar
               </Boton>

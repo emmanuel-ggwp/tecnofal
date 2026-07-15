@@ -189,7 +189,12 @@ export class ProveedorNhost implements Proveedor {
     } catch { return null; } // la laptop se registra sin modelo antes que fallar toda la compra
   }
 
-  async comprar(d: CompraDatos): Promise<{ loteId: string }> {
+  // NOTA: este adaptador NO implementa la idempotencia de compras/conversiones que Supabase
+  // ganó en 0031-0035 (unique + idempotency_key + RPCs). Es aceptable porque Nhost es un
+  // respaldo NO desplegado (ver nhost/README.md). Si algún día se activa Nhost, portar ese
+  // endurecimiento es OBLIGATORIO — está anotado en nhost/BACKLOG.md. El parámetro
+  // idempotencyKey se acepta por compatibilidad de interfaz pero se ignora aquí.
+  async comprar(d: CompraDatos, _idempotencyKey?: string): Promise<{ loteId: string }> {
     const ahora = new Date().toISOString();
     const modeloId = await this.resolverModeloId(d.modeloId);
     const lote = await this.gql<{ insert_lotes_one: { id: string } }>(

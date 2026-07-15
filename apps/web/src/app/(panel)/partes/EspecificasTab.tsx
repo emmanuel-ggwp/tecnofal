@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Boton } from '@/ui/Boton';
 import { Campo } from '@/ui/Campo';
 import { Chip } from '@/ui/Chip';
@@ -28,6 +28,8 @@ export function EspecificasTab() {
   const [parteId, setParteId] = useState('');
   const [identificador, setIdentificador] = useState('');
   const [costoReal, setCostoReal] = useState('0');
+  const [guardandoAlta, setGuardandoAlta] = useState(false);
+  const reqKeyAlta = useRef<string | null>(null);
 
   const [editando, setEditando] = useState<ParteEspecifica | null>(null);
   const [editIdentificador, setEditIdentificador] = useState('');
@@ -61,13 +63,19 @@ export function EspecificasTab() {
   }
 
   async function guardarAlta() {
+    if (guardandoAlta) return;
     setError(null);
+    if (!reqKeyAlta.current) reqKeyAlta.current = crypto.randomUUID();
+    setGuardandoAlta(true);
     try {
-      await crearEspecifica({ parteId, identificador, costoReal: Number(costoReal || '0') });
+      await crearEspecifica({ parteId, identificador, costoReal: Number(costoReal || '0') }, reqKeyAlta.current);
+      reqKeyAlta.current = null;
       setModalAltaAbierto(false);
       await cargar();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error al crear la parte específica');
+    } finally {
+      setGuardandoAlta(false);
     }
   }
 
@@ -163,7 +171,7 @@ export function EspecificasTab() {
           </div>
           <Campo label="Identificador" value={identificador} onChange={(e) => setIdentificador(e.target.value)} />
           <Campo label="Costo real" type="number" step="0.01" value={costoReal} onChange={(e) => setCostoReal(e.target.value)} />
-          <Boton onClick={guardarAlta} disabled={!parteId || !identificador}>
+          <Boton onClick={guardarAlta} disabled={!parteId || !identificador || guardandoAlta}>
             Agregar parte específica
           </Boton>
         </div>
