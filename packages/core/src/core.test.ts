@@ -145,20 +145,6 @@ describe('parser §5.1', () => {
     expect(parseListing('Lenovo T450 damaged hard drive bay cover', []).bloqueos).toEqual([]);
   });
 
-  it('vendedor nunca visto en el historial → alerta no bloqueante; sin datos → sin alerta', () => {
-    const base = 'Dell Latitude 7490 i5-8350U 16GB RAM 512GB SSD';
-    expect(parseListing(base, [], undefined, undefined, 'nuevo-vendedor', ['sam-74545']).alertas.some((a) => a.includes('Vendedor nuevo'))).toBe(true);
-    // normaliza trim+lowercase en ambos lados
-    expect(parseListing(base, [], undefined, undefined, 'Sam-74545 ', ['sam-74545']).alertas.some((a) => a.includes('Vendedor nuevo'))).toBe(false);
-    // vendedoresConocidos vacío o ausente (sin sesión / primera compra) ⇒ nunca alerta
-    expect(parseListing(base, [], undefined, undefined, 'cualquiera', []).alertas.some((a) => a.includes('Vendedor nuevo'))).toBe(false);
-    expect(parseListing(base, [], undefined, undefined, 'cualquiera', undefined).alertas.some((a) => a.includes('Vendedor nuevo'))).toBe(false);
-    // sin vendedor scrapeado ⇒ sin alerta aunque haya catálogo
-    expect(parseListing(base, [], undefined, undefined, undefined, ['sam-74545']).alertas.some((a) => a.includes('Vendedor nuevo'))).toBe(false);
-    // no bloquea nunca, sea cual sea el vendedor
-    expect(parseListing(base, [], undefined, undefined, 'nuevo-vendedor', ['sam-74545']).bloqueos).toEqual([]);
-  });
-
   it('% de batería: inglés y español, confirmado, umbral default 70', () => {
     const alto = parseListing('Dell Latitude 7490 i5-8350U 16GB RAM 512GB SSD Battery Health 87%', []);
     expect(alto.bateriaPct).toEqual({ valor: 87, confianza: 'confirmado' });
@@ -190,26 +176,13 @@ describe('parser §5.1', () => {
   });
 
   it('% de batería: umbral configurable, y "dead/missing" manda sobre el % aunque sea alto', () => {
-    const s = parseListing('Dell Latitude 7490 i5-8350U 16GB RAM 512GB SSD Battery Health 75%', [], undefined, undefined, undefined, undefined, undefined, 80);
+    const s = parseListing('Dell Latitude 7490 i5-8350U 16GB RAM 512GB SSD Battery Health 75%', [], undefined, undefined, 80);
     expect(s.bateriaPct.valor).toBe(75);
     expect(s.bateriaIncluida.valor).toBe(false); // 75% <= umbral custom (80)
     expect(s.alertas.some((a) => a.includes('Batería al 75%'))).toBe(true);
 
     const muerta = parseListing('Dell Latitude 7490 i5-8350U 16GB RAM 512GB SSD battery dead, Battery Health 95%', []);
     expect(muerta.bateriaIncluida.valor).toBe(false);
-  });
-
-  it('vendedorMuestraBateria: true solo si el vendedor (normalizado) está en la lista global y no vacía', () => {
-    const base = 'Dell Latitude 7490 i5-8350U 16GB RAM 512GB SSD';
-    expect(parseListing(base, [], undefined, undefined, 'sam-74545', undefined, ['sam-74545']).vendedorMuestraBateria).toBe(true);
-    // normaliza trim+lowercase
-    expect(parseListing(base, [], undefined, undefined, 'Sam-74545 ', undefined, ['sam-74545']).vendedorMuestraBateria).toBe(true);
-    expect(parseListing(base, [], undefined, undefined, 'otro-vendedor', undefined, ['sam-74545']).vendedorMuestraBateria).toBe(false);
-    expect(parseListing(base, [], undefined, undefined, 'sam-74545', undefined, []).vendedorMuestraBateria).toBe(false);
-    expect(parseListing(base, [], undefined, undefined, 'sam-74545', undefined, undefined).vendedorMuestraBateria).toBe(false);
-    expect(parseListing(base, [], undefined, undefined, undefined, undefined, ['sam-74545']).vendedorMuestraBateria).toBe(false);
-    // no se mezcla con `alertas` (señal positiva aparte)
-    expect(parseListing(base, [], undefined, undefined, 'sam-74545', undefined, ['sam-74545']).alertas.some((a) => a.includes('batería'))).toBe(false);
   });
 
   it('b) "No OS/No Batt/No HDD/No Power Cord" NUNCA bloquean — alimentan extras', () => {

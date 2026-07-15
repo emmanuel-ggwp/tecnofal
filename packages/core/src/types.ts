@@ -46,8 +46,6 @@ export interface SpecsParseadas {
   bateriaIncluida: Spec<boolean>;
   /** % de salud de batería parseado del título/descripción (ej. "Battery Health 87%") */
   bateriaPct: Spec<number>;
-  /** el vendedor de este listing está en la lista global de vendedores conocidos por indicar el % de batería */
-  vendedorMuestraBateria: boolean;
   sinOs: boolean;
   cantidadLote: number | null;
   detallesSugeridos: string[];

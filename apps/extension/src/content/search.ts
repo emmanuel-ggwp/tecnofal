@@ -1,7 +1,7 @@
 // §25: semáforo con ganancia en resultados de búsqueda de eBay.
 // Evaluación provisional pesimista (§20) por título; se resuelve "ya visto"/confirmado por lote (§16).
 // Incremental por viewport (IntersectionObserver) para no trabar el scroll en búsquedas largas.
-import { badgeDeResultado, colorDeMargen, parsearTiempoRestante, type Badge } from '@tecnofal/core';
+import { badgeDeResultado, colorDeMargen, parsearTiempoRestante, type AvisoVendedor, type Badge } from '@tecnofal/core';
 import { catalogoConReintento, enviar, type Catalogo, type EstadoVisto } from '../lib/mensajes';
 import { evaluarListado } from '../lib/eval';
 import { esGratis, parsearPrecio } from '../lib/precios';
@@ -34,6 +34,15 @@ const CSS = `
 .tf-estado--descartado { background: #fee2e2; color: #991b1b; }
 .tf-item--visto { opacity: .55; }
 .tf-item--visto img { filter: grayscale(.7); }
+.tf-vendor-float {
+  background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;
+  padding: 4px; margin-top: 4px; min-width: 220px; max-width: 260px;
+  font: 12px/1.4 system-ui, sans-serif;
+}
+.tf-vendor-float .tf-av-row { padding: 4px 8px; border-radius: 4px; margin: 2px 0; }
+.tf-av-bloquea { background: #fee2e2; color: #991b1b; }
+.tf-av-advierte { background: #fef9c3; color: #854d0e; }
+.tf-av-positivo { background: #dcfce7; color: #166534; }
 `;
 
 function inyectarCss() {
@@ -64,6 +73,8 @@ interface Item {
   vendedor: string | null;
   vendedorPctPositivo: number | null;
   vendedorTotalVentas: number | null;
+  /** fila DOM del vendedor — ancla para el marcador/tabla flotante de avisos */
+  vendedorFilaEl: Element | null;
   /** cantidad de ofertas (bids). null = Buy It Now (sin subasta) o no capturado. */
   cantidadOfertas: number | null;
 }
@@ -71,7 +82,7 @@ interface Item {
 /** Tarjeta del vendedor: SOLO vive en .su-card-container__attributes__secondary — la tarjeta
  *  tiene VARIAS .s-card__attribute-row (precio, ofertas+tiempo, "or Best Offer", envío,
  *  ubicación) en __primary, así que hay que acotar o se agarra la fila equivocada (el precio). */
-function vendedorDeCard(el: Element): { vendedor: string | null; vendedorPctPositivo: number | null; vendedorTotalVentas: number | null } {
+function vendedorDeCard(el: Element): { vendedor: string | null; vendedorPctPositivo: number | null; vendedorTotalVentas: number | null; filaEl: Element | null } {
   const fila = el.querySelector('.su-card-container__attributes__secondary .s-card__attribute-row');
   const spans = fila ? [...fila.querySelectorAll('span')] : [];
   // cubre tanto "100% positive (9)" como "0% positive (0)" — mismo patrón, sin caso especial
@@ -80,6 +91,7 @@ function vendedorDeCard(el: Element): { vendedor: string | null; vendedorPctPosi
     vendedor: spans[0]?.textContent?.trim() || null,
     vendedorPctPositivo: m ? parseFloat(m[1]) : null,
     vendedorTotalVentas: m ? parseInt(m[2], 10) : null,
+    filaEl: fila,
   };
 }
 
@@ -106,17 +118,17 @@ function extraerItem(el: Element): Item | null {
     .filter(Boolean)
     .join(' · ');
   const tiempoRestanteTexto = el.querySelector('.s-card__time-left, .s-item__time-left')?.textContent?.trim() ?? null;
-  const { vendedor, vendedorPctPositivo, vendedorTotalVentas } = vendedorDeCard(el);
+  const { vendedor, vendedorPctPositivo, vendedorTotalVentas, filaEl } = vendedorDeCard(el);
   const cantidadOfertas = cantidadOfertasDeCard(el);
-  return { el, tituloEl, titulo, subtitulo, precio, envio, itemId, tiempoRestanteTexto, vendedor, vendedorPctPositivo, vendedorTotalVentas, cantidadOfertas };
+  return { el, tituloEl, titulo, subtitulo, precio, envio, itemId, tiempoRestanteTexto, vendedor, vendedorPctPositivo, vendedorTotalVentas, vendedorFilaEl: filaEl, cantidadOfertas };
 }
+
+const GLIFO_AVISO: Record<AvisoVendedor['tipo'], string> = { bloquea: '⛔', advierte: '⚠', positivo: '✓' };
 
 function tooltipDe(
   badge: Badge, provisional: boolean, bloqueos: string[] = [], alertas: string[] = [],
-  vendedor?: { nombre: string | null; pctPositivo: number | null; totalVentas: number | null } | null,
-  cantidadOfertas?: number | null,
+  avisosVendedor: AvisoVendedor[] = [],
   bateriaPct?: number | null,
-  vendedorMuestraBateria?: boolean,
 ): string {
   const lineas: string[] = [];
   if (badge.margen == null) {
@@ -132,13 +144,7 @@ function tooltipDe(
   lineas.push(...bloqueos.map((b) => `⛔ ${b}`));
   lineas.push(...alertas.slice(0, 3).map((a) => (a.startsWith('⚠') ? a : `⚠ ${a}`)));
   if (bateriaPct != null) lineas.push(`🔋 Batería: ${bateriaPct}%`);
-  if (vendedorMuestraBateria) lineas.push('🔋 Vendedor conocido por indicar el % de batería');
-  if (vendedor?.nombre) {
-    const p = vendedor.pctPositivo != null ? `${vendedor.pctPositivo}%` : '?';
-    const tot = vendedor.totalVentas != null ? ` (${vendedor.totalVentas})` : '';
-    lineas.push(`Vendedor: ${vendedor.nombre} · ${p} positivo${tot}`);
-  }
-  if (cantidadOfertas != null) lineas.push(`Ofertas: ${cantidadOfertas}`);
+  lineas.push(...avisosVendedor.map((a) => `${GLIFO_AVISO[a.tipo]} ${a.texto}`));
   return lineas.join('\n');
 }
 
@@ -150,7 +156,7 @@ function renderBadge(
   bloqueos: string[] = [],
   alertas: string[] = [],
   bateriaPct?: number | null,
-  vendedorMuestraBateria?: boolean,
+  avisosVendedor: AvisoVendedor[] = [],
 ) {
   item.el.classList.toggle('tf-item--visto', !!visto);
 
@@ -164,6 +170,20 @@ function renderBadge(
     chip.style.background = bateriaPct > umbral ? '#16a34a' : '#d97706';
     chip.title = bateriaPct > umbral ? 'No hace falta cambiar la batería' : `≤${umbral}%: conviene presupuestar batería nueva`;
     item.tituloEl.prepend(chip);
+  }
+
+  // avisos de vendedor — lista siempre visible debajo de la fila del vendedor (sin nombre/%/ventas en crudo)
+  item.el.querySelector('.tf-vendor-float')?.remove();
+  if (avisosVendedor.length > 0 && item.vendedorFilaEl) {
+    const float = document.createElement('div');
+    float.className = 'tf-vendor-float';
+    for (const a of avisosVendedor) {
+      const fila = document.createElement('div');
+      fila.className = `tf-av-row tf-av-${a.tipo}`;
+      fila.textContent = `${GLIFO_AVISO[a.tipo]} ${a.texto}`;
+      float.appendChild(fila);
+    }
+    item.vendedorFilaEl.insertAdjacentElement('afterend', float);
   }
 
   // marca de "ya visto/guardado" — SIEMPRE, incluso cuando el badge queda en "?"
@@ -215,11 +235,7 @@ function renderBadge(
   const badgeTooltip: Badge = confirmadoPorVisto
     ? { ...badge, margen: visto!.margen, ganancia: visto!.ganancia, costo: visto!.costo }
     : badge;
-  let tooltip = tooltipDe(
-    badgeTooltip, provisional, bloqueos, alertas,
-    { nombre: item.vendedor, pctPositivo: item.vendedorPctPositivo, totalVentas: item.vendedorTotalVentas },
-    item.cantidadOfertas, bateriaPct, vendedorMuestraBateria,
-  );
+  let tooltip = tooltipDe(badgeTooltip, provisional, bloqueos, alertas, avisosVendedor, bateriaPct);
   if (visto) tooltip += `\n👁 Ya visto (${visto.estado})`;
   el.title = tooltip;
 }
@@ -242,12 +258,15 @@ function evaluarYPintar(item: Item, catalogo: Catalogo, vistos: Map<string, Esta
   }
   // el subtítulo (condición: "Para repuestos solamente"…) también alimenta el parser
   const textoEval = item.subtitulo ? `${item.titulo} · ${item.subtitulo}` : item.titulo;
-  const { resultado, specs } = evaluarListado(textoEval, item.precio, item.envio, catalogo, undefined, item.vendedor);
+  const { resultado, specs, avisosVendedor } = evaluarListado(
+    textoEval, item.precio, item.envio, catalogo, undefined,
+    item.vendedor, item.vendedorPctPositivo, item.vendedorTotalVentas, item.cantidadOfertas,
+  );
   const badge = badgeDeResultado(resultado, specs, catalogo.parametros);
   renderBadge(
     item, badge, visto,
     resultado.margen == null ? resultado.advertencias[0] : undefined,
-    specs.bloqueos, specs.alertas, specs.bateriaPct.valor, specs.vendedorMuestraBateria,
+    specs.bloqueos, specs.alertas, specs.bateriaPct.valor, avisosVendedor,
   );
   if (specs.bateriaPct.valor != null && item.vendedor) {
     const vNorm = item.vendedor.trim().toLowerCase();

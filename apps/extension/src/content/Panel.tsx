@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import {
-  evaluar, parseListing, precioBasePara,
-  type Confianza, type CpuTipo, type DetalleCat, type EntradaEvaluacion, type MetodoEnvio, type ModeloInfo, type Semaforo,
+  avisosDeVendedor, evaluar, parseListing, precioBasePara,
+  type AvisoVendedor, type Confianza, type CpuTipo, type DetalleCat, type EntradaEvaluacion, type MetodoEnvio, type ModeloInfo, type Semaforo,
 } from '@tecnofal/core';
 import { enviar, type Catalogo, type ListingGuardar } from '../lib/mensajes';
 import { deduccionesSugeridas, faltantesDe, PESO_LAPTOP_KG, VOLUMEN_LAPTOP_PIE3, type Faltante } from '../lib/eval';
@@ -275,14 +275,21 @@ export function Panel(p: PanelProps) {
   // corrección manual del modelo (buscador): manda sobre la detección automática
   const [modeloOverride, setModeloOverride] = useState<ModeloInfo | null>(null);
   const specs = useMemo(
-    () => parseListing(
-      p.textoCompleto, catalogo.modelos, p.titulo, modeloOverride, p.vendedor, catalogo.vendedoresConocidos,
-      catalogo.vendedoresBateria, catalogo.parametros.bateriaPctUmbral,
-    ),
-    [
-      p.textoCompleto, p.titulo, catalogo.modelos, modeloOverride, p.vendedor, catalogo.vendedoresConocidos,
-      catalogo.vendedoresBateria, catalogo.parametros.bateriaPctUmbral,
-    ],
+    () => parseListing(p.textoCompleto, catalogo.modelos, p.titulo, modeloOverride, catalogo.parametros.bateriaPctUmbral),
+    [p.textoCompleto, p.titulo, catalogo.modelos, modeloOverride, catalogo.parametros.bateriaPctUmbral],
+  );
+
+  // avisos curados sobre el vendedor (nunca se muestra nombre/%/ventas en crudo)
+  const avisosVendedor: AvisoVendedor[] = useMemo(
+    () => avisosDeVendedor({
+      vendedor: p.vendedor,
+      vendedorPctPositivo: p.vendedorPctPositivo,
+      vendedorTotalVentas: p.vendedorTotalVentas,
+      cantidadOfertas: p.cantidadOfertas,
+      vendedoresConocidos: catalogo.vendedoresConocidos,
+      vendedoresBateria: catalogo.vendedoresBateria,
+    }),
+    [p.vendedor, p.vendedorPctPositivo, p.vendedorTotalVentas, p.cantidadOfertas, catalogo.vendedoresConocidos, catalogo.vendedoresBateria],
   );
 
   // este listing trae % de batería en el título/descripción → alimenta la lista global de vendedores
@@ -456,7 +463,7 @@ export function Panel(p: PanelProps) {
         })()
       : undefined,
     pantallaTactil: tactil,
-    bloqueado: specs.bloqueos.some((b) => !descartados.includes(b)),
+    bloqueado: specs.bloqueos.some((b) => !descartados.includes(b)) || avisosVendedor.some((a) => a.tipo === 'bloquea'),
   };
   // ¿El catálogo reconoce esta CPU/gen? Si no, habilitamos un "Valor base" manual.
   const precioBaseCatalogo = useMemo(
@@ -800,27 +807,19 @@ export function Panel(p: PanelProps) {
             : `— ≤${catalogo.parametros.bateriaPctUmbral}%: conviene presupuestar nueva`}
         </div>
       )}
-      {(p.vendedor || p.cantidadOfertas != null) && (
-        <div style={{ color: '#374151', marginBottom: 4 }}>
-          {p.vendedor && (
-            <>Vendedor: <b>{p.vendedor}</b>{' '}
-              {specs.vendedorMuestraBateria && (
-                <span title="Vendedor conocido por indicar el % de batería en sus publicaciones">🔋</span>
-              )}{' '}
-              {p.vendedorPctPositivo != null && (
-                <span style={{ color: '#6b7280' }}>
-                  · {p.vendedorPctPositivo}% positivo{p.vendedorTotalVentas != null ? ` (${p.vendedorTotalVentas})` : ''}
-                </span>
-              )}
-            </>
-          )}
-          {p.cantidadOfertas != null && (
-            <span style={{ marginLeft: p.vendedor ? 8 : 0, color: '#6b7280' }}>
-              · {p.cantidadOfertas} oferta{p.cantidadOfertas === 1 ? '' : 's'}
-            </span>
-          )}
+      {avisosVendedor.map((a, i) => (
+        <div
+          key={`${a.tipo}-${i}`}
+          style={{
+            ...(a.tipo === 'bloquea' ? { background: '#fee2e2', color: '#991b1b' }
+              : a.tipo === 'advierte' ? { background: '#fef9c3', color: '#854d0e' }
+              : { background: '#dcfce7', color: '#166534' }),
+            borderRadius: 6, padding: '4px 8px', marginBottom: 4, fontWeight: a.tipo === 'bloquea' ? 600 : 400,
+          }}
+        >
+          {a.tipo === 'bloquea' ? '⛔' : a.tipo === 'advierte' ? '⚠' : '✓'} {a.texto}
         </div>
-      )}
+      ))}
       {marcando && specs.modeloDetectado && (
         <div style={{ background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 8, padding: 8, marginBottom: 6 }}>
           <div style={css.fila}>

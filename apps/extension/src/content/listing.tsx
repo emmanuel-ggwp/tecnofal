@@ -64,12 +64,17 @@ function vendedorDePagina(): { vendedor: string | null; vendedorPctPositivo: num
   const vendedor = texto('.x-sellercard-atf__about-seller-item--seller-name') || null;
   const totalTxt = texto('[data-testid="x-sellercard-atf__about-seller"]');
   const total = totalTxt ? parseInt(totalTxt.replace(/[^\d]/g, ''), 10) : NaN;
+  const vendedorTotalVentas = Number.isNaN(total) ? null : total;
   let vendedorPctPositivo: number | null = null;
   for (const el of document.querySelectorAll('[data-testid="x-sellercard-atf__data-item"]')) {
     const m = el.textContent?.match(/(\d+(?:\.\d+)?)\s*%\s*positive/i);
     if (m) { vendedorPctPositivo = parseFloat(m[1]); break; }
   }
-  return { vendedor, vendedorPctPositivo, vendedorTotalVentas: Number.isNaN(total) ? null : total };
+  // Con 0 reseñas, el widget del vendedor de la página individual no muestra "X% positive"
+  // (nada que calcular) — a diferencia de la grilla de búsqueda, que sí renderiza "0% positive
+  // (0)". 0 reseñas ⇒ 0 positivas: mismo criterio que ya usa la grilla, para no perder el aviso.
+  if (vendedorPctPositivo == null && vendedorTotalVentas === 0) vendedorPctPositivo = 0;
+  return { vendedor, vendedorPctPositivo, vendedorTotalVentas };
 }
 
 function extraerPagina() {
@@ -109,7 +114,10 @@ async function marcarVisto(pagina: ReturnType<typeof extraerPagina>, catalogo: C
   if (!pagina.itemId || !pagina.titulo) return;
   try {
     const ev = pagina.precio != null
-      ? evaluarListado(pagina.titulo, pagina.precio, pagina.envio, catalogo, undefined, pagina.vendedor)
+      ? evaluarListado(
+          pagina.titulo, pagina.precio, pagina.envio, catalogo, undefined,
+          pagina.vendedor, pagina.vendedorPctPositivo, pagina.vendedorTotalVentas, pagina.cantidadOfertas,
+        )
       : null;
     const listing: ListingGuardar = {
       ebayItemId: pagina.itemId,

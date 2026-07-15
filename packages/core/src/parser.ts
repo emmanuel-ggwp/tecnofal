@@ -45,9 +45,6 @@ export function parseListing(
   modelos: ModeloInfo[] = [],
   textoDanos?: string,
   modeloForzado?: ModeloInfo | null,
-  vendedor?: string | null,
-  vendedoresConocidos?: string[],
-  vendedoresBateria?: string[],
   bateriaPctUmbral = 70,
 ): SpecsParseadas {
   const t = texto;
@@ -255,27 +252,9 @@ export function parseListing(
   }
   if (cpuTipo.valor === 'i3') alertas.push('i3: condicional — el semáforo decide por precio');
 
-  // Vendedor nunca visto en el historial de compras (lotes.vendedor) — NO bloquea.
-  // Sin catálogo de vendedores conocidos (offline / primera compra / sin sesión), se omite:
-  // ausencia de datos no debe leerse como "vendedor nuevo".
-  if (vendedor && vendedoresConocidos && vendedoresConocidos.length > 0) {
-    const vNorm = vendedor.trim().toLowerCase();
-    if (vNorm && !vendedoresConocidos.includes(vNorm)) {
-      alertas.push('⚠ Vendedor nuevo — nunca le has comprado antes');
-    }
-  }
-
-  // Vendedor conocido (global/compartido, ver Catalogo.vendedoresBateria) por indicar el
-  // % de batería en sus publicaciones — señal de confianza, no se mezcla con `alertas`.
-  let vendedorMuestraBateria = false;
-  if (vendedor && vendedoresBateria && vendedoresBateria.length > 0) {
-    const vNorm = vendedor.trim().toLowerCase();
-    if (vNorm && vendedoresBateria.includes(vNorm)) vendedorMuestraBateria = true;
-  }
-
   return {
     cpuTipo, cpuGen, ramGb, ssdGb, esHdd,
-    pantallaPulgadas, pantallaTactil, cargadorIncluido, bateriaIncluida, bateriaPct, vendedorMuestraBateria,
+    pantallaPulgadas, pantallaTactil, cargadorIncluido, bateriaIncluida, bateriaPct,
     sinOs, cantidadLote, detallesSugeridos, modeloDetectado, alertas, bloqueos,
   };
 }
