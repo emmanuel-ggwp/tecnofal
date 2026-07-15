@@ -23,12 +23,19 @@ const DANO_SLOT_DISCO: RegExp[] = [
 // adaptador casi siempre implica que se incluye; cuando falta, el vendedor SIEMPRE lo dice con
 // una negación explícita — por eso se prioriza detectar esa negación primero, y cualquier otra
 // mención se toma como confirmación (en vez de exigir la frase exacta "charger included").
-const CARGADOR_KW = String.raw`(?:charger|adapter|ac\s*adapter|power\s*(?:cord|supply|adapter|brick)|ac\s+cord|cargador(?:es)?|adaptador(?:es)?)s?`;
+const CARGADOR_KW = String.raw`(?:charger|adapter|ac\s*adapter|ac\s*brick|power\s*(?:cord|supply|adapter|brick)|ac\s+cord|cargador(?:es)?|adaptador(?:es)?)s?`;
 const SIN_CARGADOR: RegExp[] = [
   new RegExp(String.raw`\bno\s+` + CARGADOR_KW + String.raw`\b`, 'i'),
   new RegExp(CARGADOR_KW + String.raw`\b[^.,;:·|()!]{0,20}\b(?:not\s+included|not\s+provided|missing|excluded|sold\s+separately)\b`, 'i'),
-  new RegExp(String.raw`\bwithout\b[^.,;:·|()!]{0,20}\b(?:charger|adapter)\b`, 'i'),
+  // orden invertido: "missing/excluded/sold separately/not included: CARGADOR" (packing list negado; admite ":")
+  new RegExp(String.raw`\b(?:missing|excluded|sold\s+separately|not\s+included|not\s+provided)\b:?[^.,;·|()!]{0,20}` + CARGADOR_KW, 'i'),
+  // "without a CASE but WITH charger" no debe contar como "sin cargador": no cruza un "with" real antes del cargador
+  new RegExp(String.raw`\bwithout\b(?:(?!\bwith\b)[^.,;:·|()!]){0,20}\b(?:charger|adapter)\b`, 'i'),
   new RegExp(String.raw`\bsin\b[^.,;:·|()!]{0,20}` + CARGADOR_KW, 'i'),
+  // español: "no incluye/incluyen cargador" (no solo "sin cargador")
+  new RegExp(String.raw`\bno\s+inclu\w*\b[^.,;:·|()!]{0,20}` + CARGADOR_KW, 'i'),
+  // "does not come with / doesn't include / won't come with a charger"
+  new RegExp(String.raw`\b(?:do(?:es)?\s*n[o']?t|won'?t)\s+(?:come\s+with|ship\s+with|include)\b[^.,;:·|()!]{0,20}` + CARGADOR_KW, 'i'),
 ];
 const CON_CARGADOR = new RegExp(String.raw`\b` + CARGADOR_KW + String.raw`\b`, 'i');
 
@@ -185,8 +192,11 @@ export function parseListing(
     [/lines?\s+on\s+(?:the\s+)?(?:screen|lcd|display)/i, 'Pantalla con líneas'],
     [/spots?\s+on\s+(?:the\s+)?(?:screen|lcd)|pressure\s*marks?|dead\s*pixels?/i, 'Pantalla con manchas'],
     [/scratch(?:es|ed)?|scuffs?|dents?|dings?|heavy\s+wear|\bchips\b/i, 'Carcasa marcada'],
-    [/broken\s+hinge|hinge\s+(?:broken|loose|damaged?)|loose\s+hinge/i, 'Bisagra floja'],
-    [/missing\s+keys?|keys?\s+missing/i, 'Tecla(s) faltante(s)'],
+    // bisagra dañada "de cualquier forma": floja/rota/agrietada/quebrada/tornillos faltantes, en cualquier orden con "hinge(s)"
+    [/\bhinges?\b[^.,;:·|()!]{0,25}\b(?:broken|loose|damaged?|crack(?:ed)?|snapped?|wobbl(?:y|es|ing)|missing|popped?(?:\s+out)?|stripped)\b|\b(?:broken|loose|damaged?|crack(?:ed)?|snapped?|wobbl(?:y|es)|stripped)\s+(?:(?:left|right|display)\s+)?hinges?\b|\bhinge\s+screws?\s+(?:missing|stripped)\b|\bbisagras?\s+(?:rota?s?|floja?s?|dañada?s?|quebrada?s?|partida?s?)\b/i, 'Bisagra floja'],
+    // cubre tanto "missing key(s)" (tecla completa) como "key cap/keycap missing" (solo la tapa)
+    [/\bmissing\s+key(?:\s*cap)?s?\b|\bkey(?:\s*cap)?s?\s+(?:(?:is|are)\s+)?missing\b/i, 'Tecla(s) faltante(s)'],
+    [/(?:touch\s*pad|trackpad|mouse\s*pad)\b[^.,;:·|()!]{0,25}\b(?:not\s+working|not\s+responding|does\s*n[o']?t\s+work|won'?t\s+work|broken|stick(?:s|y)?|unreliable|unresponsive|faulty|dead|no\s+funciona)\b|\b(?:erratic|faulty|unresponsive|broken)\s+(?:touch\s*pad|trackpad|mouse\s*pad)\b/i, 'Falla botón touchpad'],
     [/speakers?\s+(?:not\s+working|blown|bad|crackl)/i, 'Corneta dañada'],
   ];
   const detallesSugeridos = MAPA_DETALLES.filter(([re]) => re.test(td)).map(([, nombre]) => nombre);

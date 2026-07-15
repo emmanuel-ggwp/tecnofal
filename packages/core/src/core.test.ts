@@ -64,6 +64,64 @@ describe('parser §5.1', () => {
     expect(lejos.cargadorIncluido.valor).toBe(true);
   });
 
+  // Cobertura amplia de "sí" (incluido) — variantes reales de eBay más allá de "charger included",
+  // en inglés y español, genérico/original, y con ruido tipo "not tested"/"works fine" que NO es negación real.
+  it.each([
+    'charger included',
+    '1x Original Power Charger',
+    'Charger: Genuine Dell 65W',
+    'Included Items: AC Adapter',
+    'comes with charger',
+    'includes power cord',
+    'cargador incluido',
+    'incluye adaptador original',
+    'power supply included',
+    '3rd party charger included',
+    'generic charger included, not original',
+    'with power brick',
+    'charger not tested but included',
+    'charger works fine',
+    'comes complete with charger and case',
+  ])('cargador SÍ incluido: "%s"', (frase) => {
+    const s = parseListing(`Dell Latitude 7490 i5-8350U 8GB RAM 256GB SSD · ${frase}`, []);
+    expect(s.cargadorIncluido.valor).toBe(true);
+  });
+
+  // Cobertura amplia de "no" (faltante) — orden normal e invertido ("missing: charger"), inglés/español,
+  // frases naturales ("does not come with"), y compuestas (varios ítems excluidos a la vez).
+  it.each([
+    'no charger',
+    'no charger included',
+    'charger not included',
+    'AC adapter not provided',
+    'missing charger',
+    'charger missing',
+    'without the charger',
+    'sin cargador',
+    'sold separately: charger',
+    'AC adapter excluded',
+    'no incluye cargador',
+    'battery and charger not included',
+    'charger sold separately, not included in this listing',
+    'this laptop does not come with a charger',
+    "doesn't come with a charger",
+    'no ac adapter is provided',
+    'not included: charger',
+    "doesn't include a charger",
+  ])('cargador NO incluido: "%s"', (frase) => {
+    const s = parseListing(`Dell Latitude 7490 i5-8350U 8GB RAM 256GB SSD · ${frase}`, []);
+    expect(s.cargadorIncluido.valor).toBe(false);
+  });
+
+  it('cargador: trampas — negación de OTRO ítem no debe marcar el cargador como faltante', () => {
+    // "sin funda, pero con cargador": el "without" debe frenar en el "with" real y no seguir hasta "charger"
+    expect(parseListing('Dell Latitude 7490 i5-8350U 8GB · without a case but with charger included', []).cargadorIncluido.valor).toBe(true);
+    // "no rayones, no dead pixels" cerca pero de otro tema — no debe leerse como "no charger"
+    expect(parseListing('Dell Latitude 7490 i5-8350U 8GB · no scratches, no dents, charger included', []).cargadorIncluido.valor).toBe(true);
+    // "charger and battery sold separately": aquí SÍ debe ganar la negación — el cargador también está excluido
+    expect(parseListing('Dell Latitude 7490 i5-8350U 8GB · charger and battery sold separately', []).cargadorIncluido.valor).toBe(false);
+  });
+
   it('CPU asumida por modelo cuando el título no la menciona (referencia Dell)', () => {
     const mods: ModeloInfo[] = [{ marca: 'Dell', modelo: 'Latitude 5480', cpuTipo: 'i5', cpuGen: 7, ramSoldada: 'no', reglaCompra: 'normal' }];
     const s = parseListing('Dell Latitude 5480 8GB RAM 256GB SSD', mods);
@@ -240,6 +298,54 @@ describe('parser §5.1', () => {
   ])('pantalla con dead pixel → detalle "Pantalla con manchas": "%s"', (frase) => {
     const s = parseListing(`Dell Latitude 7490 i5-8350U 8GB RAM 256GB SSD ${frase}`, []);
     expect(s.detallesSugeridos).toContain('Pantalla con manchas');
+  });
+
+  it.each([
+    'hinge is cracked',
+    'hinges are broken',
+    'wobbly hinge',
+    'one of the hinges is loose',
+    'snapped hinge',
+    'hinge screw missing',
+    'left hinge broken',
+    'display hinge damaged',
+    'hinge popped out',
+    'bisagra rota',
+  ])('bisagra dañada de cualquier forma → detalle "Bisagra floja": "%s"', (frase) => {
+    const s = parseListing(`Dell Latitude 7490 i5-8350U 8GB RAM 256GB SSD ${frase}`, []);
+    expect(s.detallesSugeridos).toContain('Bisagra floja');
+  });
+
+  it.each([
+    'key cap missing',
+    'keycap missing',
+    'missing key cap',
+    'missing keycap',
+    'key caps missing',
+    'some keycaps are missing',
+    'cap of the key is missing',
+    'missing key button',
+    'missing keys',
+    '2 keys missing',
+  ])('teclas faltantes (incl. keycap) → detalle "Tecla(s) faltante(s)": "%s"', (frase) => {
+    const s = parseListing(`Dell Latitude 7490 i5-8350U 8GB RAM 256GB SSD ${frase}`, []);
+    expect(s.detallesSugeridos).toContain('Tecla(s) faltante(s)');
+  });
+
+  it.each([
+    'touchpad not working',
+    "touchpad doesn't work",
+    'trackpad is not responding',
+    'touchpad button broken',
+    'left click button on touchpad broken',
+    'touchpad sticks',
+    'touchpad is sticky',
+    'erratic touchpad',
+    'touchpad clicks are unreliable',
+    'mousepad no funciona',
+  ])('touchpad dañado → detalle "Falla botón touchpad": "%s"', (frase) => {
+    const s = parseListing(`Dell Latitude 7490 i5-8350U 8GB RAM 256GB SSD ${frase}`, []);
+    expect(s.detallesSugeridos).toContain('Falla botón touchpad');
   });
 
   it('a) detección de lote: "Lot of 2"', () => {
