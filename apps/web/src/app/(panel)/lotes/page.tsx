@@ -235,6 +235,7 @@ export default function LotesPage() {
       ) : (
         <Tabla
           encabezados={['Fecha', 'Origen', 'Laptops', 'Proyectado congelado', 'Actual']}
+          paginado
           claves={lotes.map((l) => l.id)}
           filas={lotes.map((l) => [
             <Link key="f" href={`/lotes/${l.id}`} data-testid={`lote-link-${l.id}`} className="underline">

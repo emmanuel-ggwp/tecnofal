@@ -60,6 +60,7 @@ export function Garantias() {
         filas={cargando ? [] : filas}
         claves={garantias.map((g) => g.ventaId)}
         vacio={cargando ? 'Cargando…' : 'Sin garantías vigentes'}
+        paginado
       />
 
       <DevolucionModal

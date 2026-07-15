@@ -131,6 +131,7 @@ export function Compradores({ compradorIdInicial = null }: CompradoresProps) {
         filas={cargando ? [] : filas}
         claves={compradores.map((c) => c.id)}
         vacio={cargando ? 'Cargando…' : 'Sin compradores'}
+        paginado
       />
 
       {seleccionId && (
