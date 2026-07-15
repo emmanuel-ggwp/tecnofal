@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import {
-  avisosDeVendedor, evaluar, parseListing, precioBasePara,
+  ajustePantalla, ajusteRam, ajusteSsd, avisosDeVendedor, evaluar, parseListing, precioBasePara,
   type AvisoVendedor, type Confianza, type CpuTipo, type DetalleCat, type EntradaEvaluacion, type MetodoEnvio, type ModeloInfo, type Semaforo,
 } from '@tecnofal/core';
 import { enviar, type Catalogo, type ListingGuardar } from '../lib/mensajes';
@@ -104,7 +104,7 @@ function DetallePicker({ catalogo, onAgregar, onCrearNuevo }: {
   const [busqueda, setBusqueda] = useState('');
   const [otrosAbiertos, setOtrosAbiertos] = useState(false);
   const [hovNombre, setHovNombre] = useState<string | null>(null);
-  const [pos, setPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  const [pos, setPos] = useState<{ top?: number; bottom?: number; left: number; width: number; maxHeight: number } | null>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
   const dropRef = useRef<HTMLDivElement>(null);
 
@@ -127,7 +127,15 @@ function DetallePicker({ catalogo, onAgregar, onCrearNuevo }: {
   const abrir = () => {
     if (btnRef.current) {
       const r = btnRef.current.getBoundingClientRect();
-      setPos({ top: r.bottom + 4, left: r.left, width: r.width });
+      const margen = 8;
+      const alturaDeseada = 340;
+      const espacioAbajo = window.innerHeight - r.bottom - margen;
+      const espacioArriba = r.top - margen;
+      if (espacioAbajo >= alturaDeseada || espacioAbajo >= espacioArriba) {
+        setPos({ top: r.bottom + 4, left: r.left, width: r.width, maxHeight: Math.max(140, Math.min(alturaDeseada, espacioAbajo)) });
+      } else {
+        setPos({ bottom: window.innerHeight - r.top + 4, left: r.left, width: r.width, maxHeight: Math.max(140, Math.min(alturaDeseada, espacioArriba)) });
+      }
     }
     setAbierto(true);
   };
@@ -177,8 +185,8 @@ function DetallePicker({ catalogo, onAgregar, onCrearNuevo }: {
         <div
           ref={dropRef}
           style={{
-            position: 'fixed', top: pos.top, left: pos.left,
-            width: Math.max(pos.width, 260), maxHeight: 340, overflowY: 'auto',
+            position: 'fixed', top: pos.top, bottom: pos.bottom, left: pos.left,
+            width: Math.max(pos.width, 260), maxHeight: pos.maxHeight, overflowY: 'auto',
             background: '#fff', border: '1px solid #d1d5db', borderRadius: 8,
             boxShadow: '0 4px 16px rgba(0,0,0,.18)', zIndex: 2147483646,
           }}
@@ -227,6 +235,62 @@ function DetallePicker({ catalogo, onAgregar, onCrearNuevo }: {
         </div>
       )}
     </>
+  );
+}
+
+// Tooltip hover: muestra a la izquierda del elemento una tabla de desglose (motivo/monto) + total.
+function TooltipTabla({ trigger, filas, total, notaFinal }: {
+  trigger: ReactNode;
+  filas: { motivo: string; monto: number }[];
+  total: number;
+  notaFinal?: string;
+}) {
+  const [hover, setHover] = useState(false);
+  const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
+  const ref = useRef<HTMLSpanElement>(null);
+
+  return (
+    <span
+      ref={ref}
+      style={{ cursor: 'help' }}
+      onMouseEnter={() => {
+        if (ref.current) {
+          const r = ref.current.getBoundingClientRect();
+          setPos({ top: r.top, right: window.innerWidth - r.left + 8 });
+        }
+        setHover(true);
+      }}
+      onMouseLeave={() => setHover(false)}
+    >
+      {trigger}
+      {hover && pos && (
+        <div style={{
+          position: 'fixed', top: pos.top, right: pos.right, zIndex: 2147483646,
+          background: '#fff', color: '#111827', border: '1px solid #d1d5db', borderRadius: 8,
+          boxShadow: '0 4px 16px rgba(0,0,0,.18)', padding: '8px 10px', fontSize: 12, minWidth: 210,
+          fontWeight: 400, textAlign: 'left',
+        }}>
+          <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+            <tbody>
+              {filas.map((f, i) => (
+                <tr key={i}>
+                  <td style={{ padding: '2px 10px 2px 0', color: '#374151', whiteSpace: 'nowrap' }}>{f.motivo}</td>
+                  <td style={{ padding: '2px 0', textAlign: 'right', color: f.monto < 0 ? '#dc2626' : '#111827' }}>
+                    {f.monto >= 0 ? '+' : '−'}${Math.abs(f.monto).toFixed(0)}
+                  </td>
+                </tr>
+              ))}
+              <tr><td colSpan={2} style={{ borderTop: '1px solid #e5e7eb', paddingTop: 4 }} /></tr>
+              <tr>
+                <td style={{ padding: '2px 10px 0 0', fontWeight: 700 }}>Total</td>
+                <td style={{ padding: '2px 0 0', textAlign: 'right', fontWeight: 700 }}>${total.toFixed(0)}</td>
+              </tr>
+            </tbody>
+          </table>
+          {notaFinal && <div style={{ marginTop: 4, color: '#6b7280', fontSize: 11 }}>{notaFinal}</div>}
+        </div>
+      )}
+    </span>
   );
 }
 
@@ -492,6 +556,34 @@ export function Panel(p: PanelProps) {
   const costoMostrar = verPorUnidad && cantidad > 1 ? r.costoPorUnidad : r.cadena.total;
   const gananciaMostrar = valorMostrar != null ? valorMostrar - costoMostrar : null;
 
+  // desglose de "Valor esperado" para el tooltip hover: precio base + cada ajuste − cada deducción
+  const desglose = useMemo(() => {
+    if (r.precioBase == null) return null;
+    const n = Math.max(cantidad, 1);
+    const filas: { motivo: string; monto: number }[] = [{ motivo: 'Precio base', monto: r.precioBase * n }];
+    const ram = ajusteRam(entrada.ramGb, catalogo.ajustes);
+    if (ram) filas.push({ motivo: `RAM ${entrada.ramGb}GB`, monto: ram * n });
+    const ssd = ajusteSsd(entrada.ssdGb, catalogo.ajustes);
+    if (ssd) filas.push({ motivo: `SSD ${entrada.ssdGb}GB`, monto: ssd * n });
+    if (tactil && catalogo.ajustes['pantalla_tactil']) {
+      filas.push({ motivo: 'Pantalla táctil', monto: (catalogo.ajustes['pantalla_tactil'] ?? 0) * n });
+    }
+    if (entrada.pantallas && entrada.pantallas.length > 0) {
+      for (const b of entrada.pantallas) {
+        const adj = ajustePantalla(b.pulgadas, catalogo.ajustes);
+        if (adj) filas.push({ motivo: `Pantalla ${b.pulgadas}" ×${b.cantidad}`, monto: adj * b.cantidad });
+      }
+    } else if (cantidad === 1) {
+      const adj = ajustePantalla(entrada.pantallaPulgadas, catalogo.ajustes);
+      if (adj) filas.push({ motivo: entrada.pantallaPulgadas! >= 15 ? 'Pantalla grande' : 'Pantalla pequeña', monto: adj });
+    }
+    for (const d of deducciones) {
+      const cant = Math.min(d.cantidad, cantidad);
+      if (cant > 0 && d.monto) filas.push({ motivo: cant > 1 ? `${d.nombre} ×${cant}` : d.nombre, monto: -d.monto * cant });
+    }
+    return filas;
+  }, [r.precioBase, entrada.ramGb, entrada.ssdGb, entrada.pantallas, entrada.pantallaPulgadas, tactil, cantidad, catalogo.ajustes, deducciones]);
+
   // explicación del margen (tooltip del ícono ⓘ en el semáforo)
   const notaMargen = r.valorEsperado != null && r.margen != null
     ? `margen = (valor esperado $${r.valorEsperado.toFixed(0)} − costo $${r.cadena.total.toFixed(0)}) ÷ $${r.cadena.total.toFixed(0)} = ${(r.margen * 100).toFixed(1)}%\numbral: ≥${(catalogo.parametros.gananciaDecente * 100).toFixed(0)}% verde · ≥${(catalogo.parametros.gananciaMinima * 100).toFixed(0)}% amarillo · menos, rojo`
@@ -632,7 +724,19 @@ export function Panel(p: PanelProps) {
           </div>
         )}
         <div style={{ display: 'flex', justifyContent: 'space-around', marginTop: 6, fontSize: 12 }}>
-          <div>{verPorUnidad && cantidad > 1 ? 'Valor/laptop' : 'Valor esperado'}<br /><b style={{ fontSize: 15 }}>{valorMostrar != null ? `$${valorMostrar.toFixed(0)}` : '—'}</b></div>
+          <div>
+            {desglose ? (
+              <TooltipTabla
+                trigger={<>{verPorUnidad && cantidad > 1 ? 'Valor/laptop' : 'Valor esperado'}</>}
+                filas={desglose}
+                total={r.valorEsperado ?? 0}
+                notaFinal={cantidad > 1 ? `≈ $${(r.valorEsperadoUnidad ?? 0).toFixed(0)} / laptop` : undefined}
+              />
+            ) : (
+              verPorUnidad && cantidad > 1 ? 'Valor/laptop' : 'Valor esperado'
+            )}
+            <br /><b style={{ fontSize: 15 }}>{valorMostrar != null ? `$${valorMostrar.toFixed(0)}` : '—'}</b>
+          </div>
           <div>{verPorUnidad && cantidad > 1 ? 'Costo/laptop' : 'Costo total est.'}<br /><b style={{ fontSize: 15 }}>${costoMostrar.toFixed(0)}</b></div>
         </div>
         {r.sMax == null && r.sinPujaMotivo && !sinBase ? (
@@ -794,19 +898,25 @@ export function Panel(p: PanelProps) {
           </span>
         )}
       </div>
-      {specs.bateriaPct.valor != null && (
-        <div
-          style={{
-            color: specs.bateriaPct.valor > catalogo.parametros.bateriaPctUmbral ? '#166534' : '#b45309',
-            fontWeight: 600, marginBottom: 4,
-          }}
-        >
-          🔋 Batería: {specs.bateriaPct.valor}%{' '}
-          {specs.bateriaPct.valor > catalogo.parametros.bateriaPctUmbral
-            ? '— no hace falta cambiarla'
-            : `— ≤${catalogo.parametros.bateriaPctUmbral}%: conviene presupuestar nueva`}
-        </div>
-      )}
+      {specs.bateriaPct.valor != null && !avisosCerrados.includes('bateria-pct') && (() => {
+        const ok = specs.bateriaPct.valor > catalogo.parametros.bateriaPctUmbral;
+        return (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, borderRadius: 6, padding: '4px 8px',
+            background: ok ? '#dcfce7' : '#fef9c3', color: ok ? '#166534' : '#854d0e', fontWeight: 600,
+          }}>
+            <span style={{ flex: 1 }}>
+              🔋 Batería: {specs.bateriaPct.valor}%{' '}
+              {ok ? '— no hace falta cambiarla' : `— ≤${catalogo.parametros.bateriaPctUmbral}%: conviene presupuestar nueva`}
+            </span>
+            <button
+              title="Cerrar este aviso"
+              onClick={() => setAvisosCerrados([...avisosCerrados, 'bateria-pct'])}
+              style={{ ...css.boton, background: ok ? '#bbf7d0' : '#fde68a', color: ok ? '#14532d' : '#78350f', padding: '1px 7px' }}
+            >×</button>
+          </div>
+        );
+      })()}
       {avisosVendedor.map((a, i) => (
         <div
           key={`${a.tipo}-${i}`}

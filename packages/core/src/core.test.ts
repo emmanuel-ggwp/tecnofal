@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseListing } from './parser.js';
-import { cadenaCostos, evaluar, precioPuja } from './evaluacion.js';
+import { ajusteRam, ajusteSsd, cadenaCostos, evaluar, precioPuja } from './evaluacion.js';
 import { PARAMETROS_DEFAULT, type EntradaEvaluacion, type ModeloInfo, type PrecioIdeal } from './types.js';
 import { MODELOS_SEMILLA } from './seeds.js';
 import { badgeDeResultado, colorDeMargen } from './badge.js';
@@ -154,7 +154,8 @@ describe('parser §5.1', () => {
     const bajo = parseListing('Dell Latitude 7490 i5-8350U 16GB RAM 512GB SSD Battery Health 55%', []);
     expect(bajo.bateriaPct).toEqual({ valor: 55, confianza: 'confirmado' });
     expect(bajo.bateriaIncluida.valor).toBe(false);
-    expect(bajo.alertas.some((a) => a.includes('Batería al 55%'))).toBe(true);
+    // el % bajo no se duplica en `alertas`: ya se muestra en el indicador dedicado de batería
+    expect(bajo.alertas.some((a) => a.includes('Batería al'))).toBe(false);
 
     // orden invertido (número antes de la palabra)
     const invertido = parseListing('Dell Latitude 7490 i5-8350U 16GB RAM 512GB SSD 92% battery', []);
@@ -173,13 +174,17 @@ describe('parser §5.1', () => {
     const sinPct = parseListing('Dell Latitude 7490 i5-8350U 16GB RAM 512GB SSD battery good', []);
     expect(sinPct.bateriaPct.valor).toBeNull();
     expect(sinPct.bateriaIncluida.valor).toBe(true);
+
+    // "Battery Health: X.X% (...)" — reporte de batería de Windows: dos puntos y decimal
+    const reporte = parseListing('Dell Latitude 7490 i5-8350U 16GB RAM 512GB SSD Battery Health: 38.9% (Generated from Battery Report)', []);
+    expect(reporte.bateriaPct).toEqual({ valor: 38, confianza: 'confirmado' });
+    expect(reporte.bateriaIncluida.valor).toBe(false);
   });
 
   it('% de batería: umbral configurable, y "dead/missing" manda sobre el % aunque sea alto', () => {
     const s = parseListing('Dell Latitude 7490 i5-8350U 16GB RAM 512GB SSD Battery Health 75%', [], undefined, undefined, 80);
     expect(s.bateriaPct.valor).toBe(75);
     expect(s.bateriaIncluida.valor).toBe(false); // 75% <= umbral custom (80)
-    expect(s.alertas.some((a) => a.includes('Batería al 75%'))).toBe(true);
 
     const muerta = parseListing('Dell Latitude 7490 i5-8350U 16GB RAM 512GB SSD battery dead, Battery Health 95%', []);
     expect(muerta.bateriaIncluida.valor).toBe(false);
@@ -208,6 +213,33 @@ describe('parser §5.1', () => {
     expect(s.detallesSugeridos).toContain('Tecla(s) faltante(s)');
     expect(s.bloqueos).toEqual([]);
     expect(parseListing('HP EliteBook 840 G5 i5-8250U 8GB RAM 256GB SSD', []).detallesSugeridos).toEqual([]);
+  });
+
+  // "screen does not work" (sin gerundio) es la misma falla real que "screen is not working":
+  // fallaFuncional debe cubrir ambas formas gramaticales, igual que ya hace SLOT_DISCO.
+  it.each([
+    'screen does not work',
+    "the screen doesn't work",
+    'screen is not working',
+    'display does not work',
+    'LCD not working',
+    "screen won't work",
+    'screen not working properly',
+  ])('pantalla que no funciona → bloqueo: "%s"', (frase) => {
+    const s = parseListing(`Dell Latitude 7490 i5-8350U 8GB RAM 256GB SSD ${frase}`, []);
+    expect(s.bloqueos.length).toBeGreaterThan(0);
+  });
+
+  it.each([
+    'screen has a dead pixel',
+    'screen has dead pixels',
+    'there is a dead pixel on the screen',
+    'LCD has dead pixel',
+    'display has dead pixels near the corner',
+    'one dead pixel visible on screen',
+  ])('pantalla con dead pixel → detalle "Pantalla con manchas": "%s"', (frase) => {
+    const s = parseListing(`Dell Latitude 7490 i5-8350U 8GB RAM 256GB SSD ${frase}`, []);
+    expect(s.detallesSugeridos).toContain('Pantalla con manchas');
   });
 
   it('a) detección de lote: "Lot of 2"', () => {
@@ -295,6 +327,13 @@ describe('motor §4', () => {
     expect(r.semaforo).toBe('rojo'); // margen ≈ 0.45 < ganancia_minima
     expect(r.margen).toBeGreaterThan(0.4);
     expect(r.margen).toBeLessThan(0.5);
+  });
+
+  it('ajusteRam/ajusteSsd: itemizado consistente con r.ajustes', () => {
+    expect(ajusteRam(entrada.ramGb, AJUSTES)).toBe(10); // 16GB → +8GB sobre base de 8
+    expect(ajusteSsd(entrada.ssdGb, AJUSTES)).toBe(0); // 256GB = base, sin extra
+    expect(ajusteRam(null, AJUSTES)).toBe(0);
+    expect(ajusteSsd(null, AJUSTES)).toBe(0);
   });
 
   it('S_max: comprar en S_max deja margen ≈ ganancia_minima', () => {

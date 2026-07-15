@@ -128,13 +128,16 @@ export function parseListing(
   if (/no\s+batt(?:ery)?\b|battery\s+(?:not\s+included|missing|removed|dead|bad)/i.test(t)) bateriaIncluida = spec(false, 'confirmado');
   else if (/battery\s+(?:included|good|great|holds|tested|health)/i.test(t)) bateriaIncluida = spec(true, 'confirmado');
 
-  // % de salud de batería (ej. "Battery Health 87%", "87% battery", "batería al 90%").
-  // Ventana acotada de 20 caracteres sin cruzar , . ; · ( ) — mismo criterio que SLOT_DISCO.
+  // % de salud de batería (ej. "Battery Health 87%", "87% battery", "batería al 90%",
+  // "Battery Health: 38.9% (Generated from Battery Report)").
+  // Ventana acotada de 20 caracteres sin cruzar , . ; · ( ) — mismo criterio que SLOT_DISCO,
+  // salvo ":" que sí se permite cruzar (formato habitual "Battery Health: X%" de reportes de batería).
+  // El número admite decimales (se trunca al entero con parseInt, ej. 38.9 → 38).
   const BATERIA_PCT: RegExp[] = [
-    /batt(?:ery)?\b[^.,;:·|()!]{0,20}?\b(\d{1,3})\s*%/i,
-    /\b(\d{1,3})\s*%[^.,;:·|()!]{0,20}?\bbatt(?:ery)?\b/i,
-    /bater[ií]a\b[^.,;:·|()!]{0,20}?\b(\d{1,3})\s*%/i,
-    /\b(\d{1,3})\s*%[^.,;:·|()!]{0,20}?\bbater[ií]a\b/i,
+    /batt(?:ery)?\b[^.,;·|()!]{0,20}?\b(\d{1,3}(?:\.\d+)?)\s*%/i,
+    /\b(\d{1,3}(?:\.\d+)?)\s*%[^.,;·|()!]{0,20}?\bbatt(?:ery)?\b/i,
+    /bater[ií]a\b[^.,;·|()!]{0,20}?\b(\d{1,3}(?:\.\d+)?)\s*%/i,
+    /\b(\d{1,3}(?:\.\d+)?)\s*%[^.,;·|()!]{0,20}?\bbater[ií]a\b/i,
   ];
   let bateriaPct = spec<number>(null, 'no_mencionado');
   for (const re of BATERIA_PCT) {
@@ -147,20 +150,19 @@ export function parseListing(
   // el % explícito manda sobre el keyword genérico "health"/"good"/etc.: por encima del
   // umbral no hace falta presupuestar batería nueva; por debajo, sí (aunque el título
   // suene positivo) — a menos que ya viniera "dead/bad/missing" (eso manda siempre).
+  // No se agrega a `alertas`: el % de batería ya se muestra en su propio indicador dedicado
+  // (fila de batería del panel, chip/tooltip en la búsqueda) — duplicarlo ahí sería redundante.
   if (bateriaPct.valor != null && bateriaIncluida.valor !== false) {
-    if (bateriaPct.valor > bateriaPctUmbral) {
-      bateriaIncluida = spec(true, 'confirmado');
-    } else {
-      bateriaIncluida = spec(false, 'confirmado');
-      alertas.push(`🔋 Batería al ${bateriaPct.valor}% — ≤${bateriaPctUmbral}%: probablemente haga falta comprar batería nueva`);
-    }
+    bateriaIncluida = spec(bateriaPct.valor > bateriaPctUmbral, 'confirmado');
   }
 
   const sinOs = /no\s+(?:os|operating\s*system|windows)\b/i.test(t);
 
   // Falla funcional real (siempre bloquea, con o sin "for parts")
+  // "work" (además de turn on/power/boot) cubre "screen/keyboard does not work", "won't work" —
+  // mismo criterio que ya usa SLOT_DISCO para "SSD slot does not work".
   const fallaFuncional =
-    /\bnot\s+working\b|\bnon[- ]?functional\b|\bnot\s+functional\b|\bdoa\b|\bno\s+power\b(?!\s*(?:cord|adapter|supply|cable|brick))|won'?t\s+(?:turn\s+on|power|boot)|does\s*n[o']?t\s+(?:turn\s+on|power|boot)/i.test(t)
+    /\bnot\s+working\b|\bnon[- ]?functional\b|\bnot\s+functional\b|\bdoa\b|\bno\s+power\b(?!\s*(?:cord|adapter|supply|cable|brick))|won'?t\s+(?:turn\s+on|power|boot|work)|does\s*n[o']?t\s+(?:turn\s+on|power|boot|work)/i.test(t)
     // locale español (títulos/condición de eBay LATAM)
     || /\bno\s+(?:enciende|funciona|prende)\b/i.test(t);
   // "For parts"/"as-is": solo es un disclaimer — NO bloquea por sí solo, solo si viene con falla funcional
