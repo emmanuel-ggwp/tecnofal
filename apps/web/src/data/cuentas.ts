@@ -147,14 +147,23 @@ export async function listarMovimientos(
   return { filas: data ?? [], total: count ?? 0 };
 }
 
-/** Movimiento manual (incluida categoría personal — cuadra saldos sin ensuciar la ganancia). */
-export async function crearMovimiento(datos: NuevoMovimiento): Promise<Movimiento> {
-  const { data, error } = await clienteSupabase().from('movimientos').insert(datos).select('*').single();
+/** Movimiento manual (incluida categoría personal — cuadra saldos sin ensuciar la ganancia).
+ *  idempotencyKey (estable entre reintentos): con onConflict do-nothing, un retry no duplica
+ *  el movimiento (0033); devuelve null si el movimiento ya existía. */
+export async function crearMovimiento(datos: NuevoMovimiento, idempotencyKey?: string): Promise<Movimiento | null> {
+  const cliente = clienteSupabase();
+  const { data, error } = idempotencyKey
+    ? await cliente.from('movimientos').upsert(
+        { ...datos, idempotency_key: idempotencyKey },
+        { onConflict: 'user_id,idempotency_key', ignoreDuplicates: true },
+      ).select('*').maybeSingle()
+    : await cliente.from('movimientos').insert(datos).select('*').single();
   if (error) throw error;
   return data;
 }
 
-/** Conversión entre cuentas: SIEMPRE vía el RPC transaccional (nunca inserts sueltos). */
+/** Conversión entre cuentas: SIEMPRE vía el RPC transaccional (nunca inserts sueltos).
+ *  idempotencyKey se reusa entre reintentos → el RPC devuelve la conversión ya creada (0033). */
 export async function registrarConversion(datos: {
   cuenta_origen: string;
   cuenta_destino: string;
@@ -162,6 +171,7 @@ export async function registrarConversion(datos: {
   monto_destino: number;
   fecha: string;
   nota?: string;
+  idempotencyKey?: string;
 }): Promise<string> {
   const { data, error } = await clienteSupabase().rpc('registrar_conversion', {
     p_cuenta_origen: datos.cuenta_origen,
@@ -170,6 +180,7 @@ export async function registrarConversion(datos: {
     p_monto_destino: datos.monto_destino,
     p_fecha: datos.fecha,
     p_nota: datos.nota ?? null,
+    p_idempotency_key: datos.idempotencyKey ?? null,
   });
   if (error) throw error;
   return data as string;
@@ -292,23 +303,23 @@ async function listarDeudas(tabla: 'por_cobrar' | 'por_pagar'): Promise<Deuda[]>
 export const listarPorCobrar = () => listarDeudas('por_cobrar');
 export const listarPorPagar = () => listarDeudas('por_pagar');
 
-async function crearDeuda(
-  tabla: 'por_cobrar' | 'por_pagar',
-  datos: { persona: string; monto: number; moneda: Moneda; fecha: string; notas?: string },
-): Promise<Deuda> {
-  const { data, error } = await clienteSupabase()
-    .from(tabla)
-    .insert({ ...datos, estado: 'pendiente', abonado: 0 })
-    .select('*')
-    .single();
+type DatosDeuda = { persona: string; monto: number; moneda: Moneda; fecha: string; notas?: string; idempotencyKey?: string };
+
+async function crearDeuda(tabla: 'por_cobrar' | 'por_pagar', datos: DatosDeuda): Promise<Deuda | null> {
+  const { idempotencyKey, ...campos } = datos;
+  const cliente = clienteSupabase();
+  const { data, error } = idempotencyKey
+    ? await cliente.from(tabla).upsert(
+        { ...campos, estado: 'pendiente', abonado: 0, idempotency_key: idempotencyKey },
+        { onConflict: 'user_id,idempotency_key', ignoreDuplicates: true },
+      ).select('*').maybeSingle()
+    : await cliente.from(tabla).insert({ ...campos, estado: 'pendiente', abonado: 0 }).select('*').single();
   if (error) throw error;
-  return { ...data, monto: Number(data.monto), abonado: Number(data.abonado) };
+  return data ? { ...data, monto: Number(data.monto), abonado: Number(data.abonado) } : null;
 }
 
-export const crearPorCobrar = (datos: { persona: string; monto: number; moneda: Moneda; fecha: string; notas?: string }) =>
-  crearDeuda('por_cobrar', datos);
-export const crearPorPagar = (datos: { persona: string; monto: number; moneda: Moneda; fecha: string; notas?: string }) =>
-  crearDeuda('por_pagar', datos);
+export const crearPorCobrar = (datos: DatosDeuda) => crearDeuda('por_cobrar', datos);
+export const crearPorPagar = (datos: DatosDeuda) => crearDeuda('por_pagar', datos);
 
 /**
  * Abona a una deuda: incrementa `abonado`, recalcula `estado`, y genera el movimiento
@@ -322,6 +333,7 @@ export async function abonar(
   montoAbono: number,
   cuentaId: string,
   fecha: string,
+  idempotencyKey?: string,
 ): Promise<EstadoDeuda> {
   const { data, error } = await clienteSupabase().rpc('registrar_abono', {
     p_tabla: tabla,
@@ -329,6 +341,7 @@ export async function abonar(
     p_monto_abono: montoAbono,
     p_cuenta_id: cuentaId,
     p_fecha: fecha,
+    p_idempotency_key: idempotencyKey ?? null,
   });
   if (error) throw new Error(error.message);
   return data as EstadoDeuda;

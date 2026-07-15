@@ -91,22 +91,26 @@ export async function crearPaquete(datos: {
   flete_estimado?: number;
   seguro_estimado?: number;
   revision_estimada?: number;
+  idempotencyKey?: string;
 }): Promise<string> {
   const cliente = clienteSupabase();
-  const { data, error } = await cliente
-    .from('paquetes')
-    .insert({
-      courier: datos.courier || null,
-      guia: datos.guia || null,
-      metodo: datos.metodo,
-      volumen_estimado_pie3: datos.volumen_estimado_pie3 ?? null,
-      peso_estimado_kg: datos.peso_estimado_kg ?? null,
-      flete_estimado: datos.flete_estimado ?? null,
-      seguro_estimado: datos.seguro_estimado ?? null,
-      revision_estimada: datos.revision_estimada ?? null,
-    })
-    .select('id')
-    .single();
+  const fila = {
+    courier: datos.courier || null,
+    guia: datos.guia || null,
+    metodo: datos.metodo,
+    volumen_estimado_pie3: datos.volumen_estimado_pie3 ?? null,
+    peso_estimado_kg: datos.peso_estimado_kg ?? null,
+    flete_estimado: datos.flete_estimado ?? null,
+    seguro_estimado: datos.seguro_estimado ?? null,
+    revision_estimada: datos.revision_estimada ?? null,
+  };
+  // Con clave: upsert idempotente — un reintento tras falso error devuelve el mismo paquete (0034).
+  const { data, error } = datos.idempotencyKey
+    ? await cliente.from('paquetes').upsert(
+        { ...fila, idempotency_key: datos.idempotencyKey },
+        { onConflict: 'user_id,idempotency_key' },
+      ).select('id').single()
+    : await cliente.from('paquetes').insert(fila).select('id').single();
   if (error) throw new Error(error.message);
   return data.id as string;
 }
@@ -182,16 +186,9 @@ export async function agregarItemParte(
   descripcion: string,
   volumenPie3: number,
   valorDeclarado: number,
+  idempotencyKey?: string,
 ): Promise<void> {
-  const cliente = clienteSupabase();
-  const { error } = await cliente.from('paquete_items').insert({
-    paquete_id: paqueteId,
-    tipo: 'parte',
-    descripcion,
-    volumen_pie3: volumenPie3,
-    valor_declarado: valorDeclarado,
-  });
-  if (error) throw new Error(error.message);
+  await insertarItemPaquete('parte', paqueteId, descripcion, volumenPie3, valorDeclarado, idempotencyKey);
 }
 
 /** Ítem personal: participa del prorrateo pero su costo va a gastos personales, no a laptops. */
@@ -200,15 +197,28 @@ export async function agregarItemPersonal(
   descripcion: string,
   volumenPie3: number,
   valorDeclarado: number,
+  idempotencyKey?: string,
+): Promise<void> {
+  await insertarItemPaquete('personal', paqueteId, descripcion, volumenPie3, valorDeclarado, idempotencyKey);
+}
+
+async function insertarItemPaquete(
+  tipo: 'parte' | 'personal',
+  paqueteId: string,
+  descripcion: string,
+  volumenPie3: number,
+  valorDeclarado: number,
+  idempotencyKey?: string,
 ): Promise<void> {
   const cliente = clienteSupabase();
-  const { error } = await cliente.from('paquete_items').insert({
-    paquete_id: paqueteId,
-    tipo: 'personal',
-    descripcion,
-    volumen_pie3: volumenPie3,
-    valor_declarado: valorDeclarado,
-  });
+  const fila = { paquete_id: paqueteId, tipo, descripcion, volumen_pie3: volumenPie3, valor_declarado: valorDeclarado };
+  // Con clave: upsert do-nothing — un reintento no duplica el ítem (que infla el prorrateo) (0034).
+  const { error } = idempotencyKey
+    ? await cliente.from('paquete_items').upsert(
+        { ...fila, idempotency_key: idempotencyKey },
+        { onConflict: 'user_id,idempotency_key', ignoreDuplicates: true },
+      )
+    : await cliente.from('paquete_items').insert(fila);
   if (error) throw new Error(error.message);
 }
 

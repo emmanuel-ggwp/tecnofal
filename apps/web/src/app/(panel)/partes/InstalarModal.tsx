@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Boton } from '@/ui/Boton';
 import { Campo } from '@/ui/Campo';
 import { Dinero } from '@/ui/Dinero';
@@ -35,27 +35,31 @@ export function InstalarModal({ abierto, parte, onCerrar, onInstalado }: Instala
   const [seleccionada, setSeleccionada] = useState<LaptopOpcion | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [enviando, setEnviando] = useState(false);
+  const reqKey = useRef<string | null>(null); // clave reusada entre reintentos → commodity idempotente (0034)
 
   useEffect(() => {
     if (!abierto) return;
     setBusqueda('');
     setSeleccionada(null);
     setError(null);
+    reqKey.current = null;
     listarLaptopsInstalables().then(setOpciones).catch((e) => setError(e.message));
   }, [abierto]);
 
   const filtradas = opciones.filter((o) => o.alias.toLowerCase().includes(busqueda.toLowerCase()));
 
   async function confirmar() {
-    if (!parte || !seleccionada) return;
+    if (!parte || !seleccionada || enviando) return;
+    if (!reqKey.current) reqKey.current = crypto.randomUUID();
     setEnviando(true);
     setError(null);
     try {
       if (parte.tipo === 'commodity') {
-        await instalarParteCommodity(seleccionada.id, parte.id);
+        await instalarParteCommodity(seleccionada.id, parte.id, reqKey.current);
       } else {
-        await instalarParteEspecifica(seleccionada.id, parte.id);
+        await instalarParteEspecifica(seleccionada.id, parte.id, reqKey.current);
       }
+      reqKey.current = null;
       onInstalado();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No se pudo instalar la parte.');

@@ -178,6 +178,8 @@ export async function crearLoteLocal(datos: {
   flete_nacional?: number;
   revision?: number;
   laptops: NuevaLaptopSpec[];
+  /** clave estable reusada entre reintentos del mismo submit → el RPC no duplica el lote */
+  idempotencyKey?: string;
 }): Promise<string> {
   const ahora = new Date().toISOString();
   // Regla: nunca crear líneas en cero. Compra local = dinero ya gastado en el momento del
@@ -197,6 +199,7 @@ export async function crearLoteLocal(datos: {
     p_lote: { fecha_compra: datos.fecha_compra, origen: 'local', precio_subasta: datos.precio_compra, costo_proyectado_total: totalProyectado },
     p_lineas: lineas,
     p_laptops: datos.laptops.map((s) => laptopSpecAJson(s, 'en_revision')),
+    p_idempotency_key: datos.idempotencyKey ?? null,
   });
   if (error) throw new Error(error.message);
   return data as string;
@@ -216,6 +219,8 @@ export async function crearLoteEbay(datos: {
   seguro?: number;
   metodo_estimado?: MetodoEstimado;
   laptops: NuevaLaptopSpec[];
+  /** clave estable reusada entre reintentos del mismo submit → el RPC no duplica el lote */
+  idempotencyKey?: string;
 }): Promise<string> {
   const ahora = new Date().toISOString();
   const montos: Array<{ tipo: string; monto: number }> = [{ tipo: 'subasta', monto: datos.precio_subasta }];
@@ -238,36 +243,23 @@ export async function crearLoteEbay(datos: {
     },
     p_lineas: lineas,
     p_laptops: datos.laptops.map((s) => laptopSpecAJson(s, 'comprada')),
+    p_idempotency_key: datos.idempotencyKey ?? null,
   });
   if (error) throw new Error(error.message);
   return data as string;
 }
 
-/** Registrar/actualizar el monto real de una línea de costo del lote (0 y negativos permitidos). */
+/** Registrar/actualizar el monto real de una línea de costo del lote (0 y negativos permitidos).
+ *  Atómico e idempotente vía RPC `registrar_costo_real_lote` (0034): INSERT ... ON CONFLICT
+ *  DO UPDATE por (user_id, ambito, ambito_id, tipo) — reemplaza el select-then-insert que ante
+ *  dos pestañas/reintento creaba dos líneas 'real' del mismo (lote, tipo). */
 export async function registrarCostoRealLote(loteId: string, tipo: string, montoReal: number): Promise<void> {
-  const cliente = clienteSupabase();
-  const { data: existente, error: errSel } = await cliente
-    .from('costo_lineas')
-    .select('id')
-    .eq('ambito', 'lote')
-    .eq('ambito_id', loteId)
-    .eq('tipo', tipo)
-    .maybeSingle();
-  if (errSel) throw new Error(errSel.message);
-
-  const ahora = new Date().toISOString();
-  if (existente) {
-    const { error } = await cliente
-      .from('costo_lineas')
-      .update({ monto_real: montoReal, fecha_real: ahora })
-      .eq('id', existente.id);
-    if (error) throw new Error(error.message);
-  } else {
-    const { error } = await cliente
-      .from('costo_lineas')
-      .insert({ ambito: 'lote', ambito_id: loteId, tipo, monto_real: montoReal, fecha_real: ahora });
-    if (error) throw new Error(error.message);
-  }
+  const { error } = await clienteSupabase().rpc('registrar_costo_real_lote', {
+    p_lote: loteId,
+    p_tipo: tipo,
+    p_monto: montoReal,
+  });
+  if (error) throw new Error(error.message);
 }
 
 export async function listarPartesCatalogo(): Promise<ParteCatalogo[]> {
@@ -304,13 +296,13 @@ export async function agregarParteEncontrada(
   cantidad: number,
   valorNominalAplicado: number,
 ): Promise<void> {
+  // upsert por clave natural (lote_id, parte_id): re-agregar la misma parte al lote reemplaza
+  // en vez de duplicar (0034) — antes un doble-submit/reintento inflaba v_nominales del reparto.
   const cliente = clienteSupabase();
-  const { error } = await cliente.from('lote_partes_encontradas').insert({
-    lote_id: loteId,
-    parte_id: parteId,
-    cantidad,
-    valor_nominal_aplicado: valorNominalAplicado,
-  });
+  const { error } = await cliente.from('lote_partes_encontradas').upsert(
+    { lote_id: loteId, parte_id: parteId, cantidad, valor_nominal_aplicado: valorNominalAplicado },
+    { onConflict: 'lote_id,parte_id' },
+  );
   if (error) throw new Error(error.message);
 }
 

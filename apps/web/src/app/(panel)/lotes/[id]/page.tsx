@@ -93,7 +93,7 @@ export default function LoteDetallePage() {
   }
 
   async function agregarParte() {
-    if (!parteSeleccionada) return;
+    if (!parteSeleccionada || guardando) return; // upsert por (lote_id,parte_id) ya es idempotente (0034)
     setGuardando(true);
     try {
       const parte = catalogo.find((p) => p.id === parteSeleccionada);

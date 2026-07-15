@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Boton } from '@/ui/Boton';
 import { Campo } from '@/ui/Campo';
 import { Chip } from '@/ui/Chip';
@@ -16,6 +16,7 @@ export default function PaquetesPage() {
   const [error, setError] = useState<string | null>(null);
   const [modalAbierto, setModalAbierto] = useState(false);
   const [guardando, setGuardando] = useState(false);
+  const reqKeyPaquete = useRef<string | null>(null);
 
   const [courier, setCourier] = useState('');
   const [guia, setGuia] = useState('');
@@ -43,6 +44,8 @@ export default function PaquetesPage() {
   }, []);
 
   async function guardar() {
+    if (guardando) return;
+    if (!reqKeyPaquete.current) reqKeyPaquete.current = crypto.randomUUID();
     setGuardando(true);
     try {
       await crearPaquete({
@@ -54,7 +57,9 @@ export default function PaquetesPage() {
         flete_estimado: fleteEst ? Number(fleteEst) : undefined,
         seguro_estimado: seguroEst ? Number(seguroEst) : undefined,
         revision_estimada: revisionEst ? Number(revisionEst) : undefined,
+        idempotencyKey: reqKeyPaquete.current,
       });
+      reqKeyPaquete.current = null;
       setModalAbierto(false);
       setCourier('');
       setGuia('');

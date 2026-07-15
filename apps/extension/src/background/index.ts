@@ -15,10 +15,15 @@ const local = new ProveedorLocal();
 const { proveedor: remoto, nombre: nombreEspejo } = crearProveedor(almacen);
 
 let ultimoSync: number | null = null;
+// Evita reentrancia: sincronizar() se dispara fire-and-forget desde casi toda acción del
+// usuario más la alarma de 5 min — sin este lock, dos llamadas solapadas pueden leer la
+// misma compra 'pendiente' antes de que ninguna la marque sincronizada y duplicar el lote.
+let syncEnCurso = false;
 
 // ---------- Capa de sync (§22): push de pendientes + pull de config; fallo = reintento silencioso ----------
 async function sincronizar(): Promise<void> {
-  if (!remoto) return;
+  if (!remoto || syncEnCurso) return;
+  syncEnCurso = true;
   try {
     const ses = await remoto.getSession();
     if (!ses.email) return; // sin sesión → seguimos solo-local
@@ -31,7 +36,10 @@ async function sincronizar(): Promise<void> {
     }
     for (const c of await local.comprasPendientes()) {
       try {
-        const r = await remoto.comprar(c.datos);
+        // c.id (local:UUID) es la clave de idempotencia: si el push tuvo éxito pero el SW
+        // murió antes de marcarCompraSincronizada, el re-push con la misma clave devuelve el
+        // lote ya creado en vez de duplicarlo.
+        const r = await remoto.comprar(c.datos, c.id);
         await local.marcarCompraSincronizada(c.id, r.loteId);
       } catch (e) { console.error('[sync] compra', c.id, e); /* reintento */ }
     }
@@ -73,6 +81,7 @@ async function sincronizar(): Promise<void> {
     if (cat) await local.aplicarConfigRemota(cat);
     ultimoSync = Date.now();
   } catch (e) { console.error('[sync]', e); }
+  finally { syncEnCurso = false; }
 }
 
 chrome.runtime.onInstalled.addListener(() => {

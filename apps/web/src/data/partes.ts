@@ -182,21 +182,29 @@ export async function listarStock(): Promise<StockFila[]> {
   });
 }
 
-/** Compra rápida inline: insert en partes_compras — el trigger recalcula el promedio ponderado. */
+/** Compra rápida inline: insert en partes_compras — el trigger recalcula el promedio ponderado.
+ *  idempotencyKey (estable entre reintentos del mismo submit): con onConflict do-nothing, un
+ *  reintento tras falso error de red NO reinserta ni corrompe el promedio/stock (0032). */
 export async function registrarCompraStock(
   parteId: string,
   cantidad: number,
   costoUnitario: number,
   fecha?: string,
+  idempotencyKey?: string,
 ): Promise<void> {
-  const { error } = await clienteSupabase()
-    .from('partes_compras')
-    .insert({
-      parte_id: parteId,
-      cantidad,
-      costo_unitario: costoUnitario,
-      fecha: fecha ?? new Date().toISOString().slice(0, 10),
-    });
+  const fila = {
+    parte_id: parteId,
+    cantidad,
+    costo_unitario: costoUnitario,
+    fecha: fecha ?? new Date().toISOString().slice(0, 10),
+  };
+  const cliente = clienteSupabase();
+  const { error } = idempotencyKey
+    ? await cliente.from('partes_compras').upsert(
+        { ...fila, idempotency_key: idempotencyKey },
+        { onConflict: 'user_id,idempotency_key', ignoreDuplicates: true },
+      )
+    : await cliente.from('partes_compras').insert(fila);
   if (error) throw error;
 }
 
@@ -232,17 +240,15 @@ export interface ParteEspecificaInput {
   costoReal: number;
 }
 
-export async function crearEspecifica(input: ParteEspecificaInput): Promise<string> {
-  const { data, error } = await clienteSupabase()
-    .from('partes_especificas')
-    .insert({
-      parte_id: input.parteId,
-      identificador: input.identificador,
-      costo_real: input.costoReal,
-      origen: 'compra',
-    })
-    .select('id')
-    .single();
+export async function crearEspecifica(input: ParteEspecificaInput, idempotencyKey?: string): Promise<string> {
+  const fila = { parte_id: input.parteId, identificador: input.identificador, costo_real: input.costoReal, origen: 'compra' };
+  const cliente = clienteSupabase();
+  const { data, error } = idempotencyKey
+    ? await cliente.from('partes_especificas').upsert(
+        { ...fila, idempotency_key: idempotencyKey },
+        { onConflict: 'user_id,idempotency_key' },
+      ).select('id').single()
+    : await cliente.from('partes_especificas').insert(fila).select('id').single();
   if (error) throw error;
   return data.id as string;
 }
@@ -265,18 +271,16 @@ export async function cosecharParte(
   parteId: string,
   identificador: string,
   costoReal = 0,
+  idempotencyKey?: string,
 ): Promise<string> {
-  const { data, error } = await clienteSupabase()
-    .from('partes_especificas')
-    .insert({
-      parte_id: parteId,
-      identificador,
-      costo_real: costoReal,
-      origen: 'cosechada',
-      cosechada_de_laptop_id: donanteLaptopId,
-    })
-    .select('id')
-    .single();
+  const fila = { parte_id: parteId, identificador, costo_real: costoReal, origen: 'cosechada', cosechada_de_laptop_id: donanteLaptopId };
+  const cliente = clienteSupabase();
+  const { data, error } = idempotencyKey
+    ? await cliente.from('partes_especificas').upsert(
+        { ...fila, idempotency_key: idempotencyKey },
+        { onConflict: 'user_id,idempotency_key' },
+      ).select('id').single()
+    : await cliente.from('partes_especificas').insert(fila).select('id').single();
   if (error) throw error;
   return data.id as string;
 }
@@ -331,10 +335,11 @@ export async function listarLaptopsDonantes(busqueda = ''): Promise<LaptopOpcion
  * 0022): descuenta partes_stock + crea laptop_partes + costo_lineas en una transacción
  * (antes eran 3 escrituras separadas desde el cliente, sin garantía de todo-o-nada).
  */
-export async function instalarParteCommodity(laptopId: string, parteId: string): Promise<void> {
+export async function instalarParteCommodity(laptopId: string, parteId: string, idempotencyKey?: string): Promise<void> {
   const { error } = await clienteSupabase().rpc('instalar_parte', {
     p_laptop_id: laptopId,
     p_parte_id: parteId,
+    p_idempotency_key: idempotencyKey ?? null,
   });
   if (error) throw new Error(error.message);
 }
@@ -343,10 +348,11 @@ export async function instalarParteCommodity(laptopId: string, parteId: string):
  * Instala una parte específica: laptop_asignada_id = laptop, costo_aplicado = costo_real.
  * Atómico vía RPC `instalar_parte` (mismo mecanismo que la variante commodity).
  */
-export async function instalarParteEspecifica(laptopId: string, especificaId: string): Promise<void> {
+export async function instalarParteEspecifica(laptopId: string, especificaId: string, idempotencyKey?: string): Promise<void> {
   const { error } = await clienteSupabase().rpc('instalar_parte', {
     p_laptop_id: laptopId,
     p_especifica_id: especificaId,
+    p_idempotency_key: idempotencyKey ?? null,
   });
   if (error) throw new Error(error.message);
 }

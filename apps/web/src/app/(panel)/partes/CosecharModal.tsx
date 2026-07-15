@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Boton } from '@/ui/Boton';
 import { Campo } from '@/ui/Campo';
 import { Modal } from '@/ui/Modal';
@@ -30,6 +30,7 @@ export function CosecharModal({ abierto, onCerrar, onCosechada }: CosecharModalP
   const [costo, setCosto] = useState('0');
   const [error, setError] = useState<string | null>(null);
   const [enviando, setEnviando] = useState(false);
+  const reqKey = useRef<string | null>(null);
 
   useEffect(() => {
     if (!abierto) return;
@@ -39,6 +40,7 @@ export function CosecharModal({ abierto, onCerrar, onCosechada }: CosecharModalP
     setIdentificador('');
     setCosto('0');
     setError(null);
+    reqKey.current = null;
     Promise.all([listarLaptopsDonantes(), listarCatalogo()])
       .then(([d, c]) => {
         setDonantes(d);
@@ -50,11 +52,13 @@ export function CosecharModal({ abierto, onCerrar, onCosechada }: CosecharModalP
   const filtrados = donantes.filter((d) => d.alias.toLowerCase().includes(busqueda.toLowerCase()));
 
   async function confirmar() {
-    if (!donanteSeleccionado || !parteId || !identificador) return;
+    if (!donanteSeleccionado || !parteId || !identificador || enviando) return;
+    if (!reqKey.current) reqKey.current = crypto.randomUUID();
     setEnviando(true);
     setError(null);
     try {
-      await cosecharParte(donanteSeleccionado.id, parteId, identificador, Number(costo || '0'));
+      await cosecharParte(donanteSeleccionado.id, parteId, identificador, Number(costo || '0'), reqKey.current);
+      reqKey.current = null;
       onCosechada();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No se pudo registrar la cosecha.');

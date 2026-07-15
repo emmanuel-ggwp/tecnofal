@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Boton } from '@/ui/Boton';
 import { Campo } from '@/ui/Campo';
 import { Chip } from '@/ui/Chip';
@@ -141,6 +141,11 @@ export default function LotesPage() {
   const [laptopsEbay, setLaptopsEbay] = useState<NuevaLaptopSpec[]>([nuevaLaptopVacia()]);
 
   const [guardando, setGuardando] = useState(false);
+  // Clave de idempotencia por submit: se genera una vez y se reusa si el usuario reintenta
+  // tras un error (el RPC no es idempotente sin ella). Se limpia solo al tener éxito, para
+  // que la siguiente compra genere una clave nueva.
+  const reqKeyLocal = useRef<string | null>(null);
+  const reqKeyEbay = useRef<string | null>(null);
 
   async function cargar() {
     setCargando(true);
@@ -159,6 +164,8 @@ export default function LotesPage() {
   }, []);
 
   async function guardarLocal() {
+    if (guardando) return; // guard de reentrada: el RPC no es idempotente, un doble-submit duplica el lote
+    if (!reqKeyLocal.current) reqKeyLocal.current = crypto.randomUUID();
     setGuardando(true);
     try {
       await crearLoteLocal({
@@ -167,7 +174,9 @@ export default function LotesPage() {
         flete_nacional: fleteLocal ? Number(fleteLocal) : undefined,
         revision: revisionLocal ? Number(revisionLocal) : undefined,
         laptops: limpiarSpecs(laptopsLocal),
+        idempotencyKey: reqKeyLocal.current,
       });
+      reqKeyLocal.current = null; // éxito → la próxima compra usa clave nueva
       setModalLocal(false);
       setPrecioLocal('');
       setFleteLocal('');
@@ -182,6 +191,8 @@ export default function LotesPage() {
   }
 
   async function guardarEbay() {
+    if (guardando) return; // guard de reentrada: el RPC no es idempotente, un doble-submit duplica el lote
+    if (!reqKeyEbay.current) reqKeyEbay.current = crypto.randomUUID();
     setGuardando(true);
     try {
       await crearLoteEbay({
@@ -193,7 +204,9 @@ export default function LotesPage() {
         impuesto_ebay: impuestoEbay ? Number(impuestoEbay) : undefined,
         seguro: seguroEbay ? Number(seguroEbay) : undefined,
         laptops: limpiarSpecs(laptopsEbay),
+        idempotencyKey: reqKeyEbay.current,
       });
+      reqKeyEbay.current = null; // éxito → la próxima compra usa clave nueva
       setModalEbay(false);
       setUrlEbay('');
       setVendedorEbay('');

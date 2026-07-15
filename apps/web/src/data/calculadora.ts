@@ -149,12 +149,14 @@ export interface CrearLoteInput {
   titulo: string;
   url?: string | null;
   faltantes: ItemFaltante[];
+  /** clave estable reusada entre reintentos del mismo submit → el RPC no duplica el lote */
+  idempotencyKey?: string;
 }
 
 /** Convierte la evaluación actual en un lote real: `lotes` + `costo_lineas` (ámbito lote,
  *  estimados congelados) + N `laptops` (mismo shape de compra que usa la extensión). */
 export async function crearLote(input: CrearLoteInput): Promise<{ loteId: string }> {
-  const { entrada, resultado, titulo, url, faltantes } = input;
+  const { entrada, resultado, titulo, url, faltantes, idempotencyKey } = input;
   const n = Math.max(entrada.cantidadLaptops, 1);
   const esLocal = entrada.origen === 'local';
 
@@ -219,6 +221,7 @@ export async function crearLote(input: CrearLoteInput): Promise<{ loteId: string
     },
     p_lineas: lineas,
     p_laptops: filas,
+    p_idempotency_key: idempotencyKey ?? null,
   });
   if (error) throw new Error(`No se pudo crear el lote: ${error.message}`);
 

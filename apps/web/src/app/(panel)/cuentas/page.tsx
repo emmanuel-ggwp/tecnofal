@@ -2,7 +2,7 @@
 
 // /cuentas (plan-07): libro por cuenta, conversiones con tasa implícita, resultado cambiario,
 // tasas del día, movimientos personales, y por cobrar / por pagar con abonos.
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Boton } from '@/ui/Boton';
 import { Campo } from '@/ui/Campo';
@@ -105,6 +105,13 @@ export default function CuentasPage() {
   const [abonoMonto, setAbonoMonto] = useState('');
   const [abonoCuenta, setAbonoCuenta] = useState('');
 
+  // Guards de reentrada + claves de idempotencia reusadas entre reintentos: los inserts/RPC de
+  // dinero no son idempotentes sin ellas (0033), y un doble-submit duplicaría asientos de caja.
+  const [enviando, setEnviando] = useState(false);
+  const reqKeyMov = useRef<string | null>(null);
+  const reqKeyDeuda = useRef<string | null>(null);
+  const reqKeyAbono = useRef<string | null>(null);
+
   const recargarSaldos = useCallback(async () => {
     setSaldos(await obtenerSaldos());
   }, []);
@@ -182,19 +189,26 @@ export default function CuentasPage() {
 
   const enviarMovimiento = async () => {
     const monto = Number(movMonto);
-    if (!movCuenta || !(monto > 0)) return;
-    await crearMovimiento({
-      cuenta_id: movCuenta,
-      fecha: movFecha,
-      tipo: movTipo,
-      monto,
-      categoria: movCategoria,
-      concepto: movConcepto || undefined,
-    });
-    setMovMonto('');
-    setMovConcepto('');
-    await recargarSaldos();
-    await recargarLibro();
+    if (!movCuenta || !(monto > 0) || enviando) return;
+    if (!reqKeyMov.current) reqKeyMov.current = crypto.randomUUID();
+    setEnviando(true);
+    try {
+      await crearMovimiento({
+        cuenta_id: movCuenta,
+        fecha: movFecha,
+        tipo: movTipo,
+        monto,
+        categoria: movCategoria,
+        concepto: movConcepto || undefined,
+      }, reqKeyMov.current);
+      reqKeyMov.current = null;
+      setMovMonto('');
+      setMovConcepto('');
+      await recargarSaldos();
+      await recargarLibro();
+    } finally {
+      setEnviando(false);
+    }
   };
 
   const enviarCuenta = async () => {
@@ -207,25 +221,39 @@ export default function CuentasPage() {
   };
 
   const enviarDeuda = async () => {
-    if (!modalDeuda || !deudaPersona || !(Number(deudaMonto) > 0)) return;
-    const datos = { persona: deudaPersona, monto: Number(deudaMonto), moneda: deudaMoneda, fecha: deudaFecha, notas: deudaNotas || undefined };
-    if (modalDeuda === 'por_cobrar') await crearPorCobrar(datos);
-    else await crearPorPagar(datos);
-    setDeudaPersona('');
-    setDeudaMonto('');
-    setDeudaNotas('');
-    setModalDeuda(null);
-    await recargarDeudas();
+    if (!modalDeuda || !deudaPersona || !(Number(deudaMonto) > 0) || enviando) return;
+    if (!reqKeyDeuda.current) reqKeyDeuda.current = crypto.randomUUID();
+    setEnviando(true);
+    try {
+      const datos = { persona: deudaPersona, monto: Number(deudaMonto), moneda: deudaMoneda, fecha: deudaFecha, notas: deudaNotas || undefined, idempotencyKey: reqKeyDeuda.current };
+      if (modalDeuda === 'por_cobrar') await crearPorCobrar(datos);
+      else await crearPorPagar(datos);
+      reqKeyDeuda.current = null;
+      setDeudaPersona('');
+      setDeudaMonto('');
+      setDeudaNotas('');
+      setModalDeuda(null);
+      await recargarDeudas();
+    } finally {
+      setEnviando(false);
+    }
   };
 
   const enviarAbono = async () => {
-    if (!abonoActivo || !abonoCuenta || !(Number(abonoMonto) > 0)) return;
-    await abonar(abonoActivo.tabla, abonoActivo.deuda, Number(abonoMonto), abonoCuenta, hoyISO());
-    setAbonoActivo(null);
-    setAbonoMonto('');
-    setAbonoCuenta('');
-    await recargarDeudas();
-    await recargarSaldos();
+    if (!abonoActivo || !abonoCuenta || !(Number(abonoMonto) > 0) || enviando) return;
+    if (!reqKeyAbono.current) reqKeyAbono.current = crypto.randomUUID();
+    setEnviando(true);
+    try {
+      await abonar(abonoActivo.tabla, abonoActivo.deuda, Number(abonoMonto), abonoCuenta, hoyISO(), reqKeyAbono.current);
+      reqKeyAbono.current = null;
+      setAbonoActivo(null);
+      setAbonoMonto('');
+      setAbonoCuenta('');
+      await recargarDeudas();
+      await recargarSaldos();
+    } finally {
+      setEnviando(false);
+    }
   };
 
   const enviarTasa = async () => {
@@ -426,7 +454,7 @@ export default function CuentasPage() {
               </select>
             </div>
             <Campo label="Concepto" value={movConcepto} onChange={(e) => setMovConcepto(e.target.value)} />
-            <Boton onClick={() => void enviarMovimiento()}>Registrar movimiento</Boton>
+            <Boton onClick={() => void enviarMovimiento()} disabled={enviando}>Registrar movimiento</Boton>
           </div>
         </div>
       </div>
@@ -568,7 +596,7 @@ export default function CuentasPage() {
             <Boton variante="secundario" onClick={() => setModalDeuda(null)}>
               Cancelar
             </Boton>
-            <Boton onClick={() => void enviarDeuda()}>Crear</Boton>
+            <Boton onClick={() => void enviarDeuda()} disabled={enviando}>Crear</Boton>
           </div>
         </div>
       </Modal>
@@ -603,7 +631,7 @@ export default function CuentasPage() {
             <Boton variante="secundario" onClick={() => setAbonoActivo(null)}>
               Cancelar
             </Boton>
-            <Boton onClick={() => void enviarAbono()}>Confirmar abono</Boton>
+            <Boton onClick={() => void enviarAbono()} disabled={enviando}>Confirmar abono</Boton>
           </div>
         </div>
       </Modal>

@@ -193,12 +193,15 @@ export class ProveedorSupabase implements Proveedor {
     return data.id;
   }
 
-  async comprar(d: CompraDatos): Promise<{ loteId: string }> {
+  async comprar(d: CompraDatos, idempotencyKey?: string): Promise<{ loteId: string }> {
     const ahora = new Date().toISOString();
     const modeloId = await this.resolverModeloId(d.modeloId);
-    const { data: lote, error: eLote } = await this.sb
-      .from('lotes')
-      .insert({
+    // Atómico + idempotente vía registrar_compra_lote (0022 + 0031): un solo statement crea
+    // lote + líneas + laptops en una transacción, y con idempotencyKey un re-push devuelve el
+    // lote ya creado en vez de duplicarlo. El RPC fija ambito_id/lote_id él mismo, así que el
+    // loteId que pasamos a lineasDeCompra/filasLaptops es un placeholder ignorado.
+    const { data: loteId, error: eLote } = await this.sb.rpc('registrar_compra_lote', {
+      p_lote: {
         origen: 'ebay',
         url_ebay: d.listing.url,
         vendedor: d.listing.vendedor ?? null,
@@ -206,22 +209,20 @@ export class ProveedorSupabase implements Proveedor {
         envio_usa: d.envioUsa,
         costo_proyectado_total: proyectadoDeCompra(d),
         metodo_estimado: d.metodo,
-      })
-      .select('id').single();
+      },
+      p_lineas: lineasDeCompra(d, 'placeholder', ahora),
+      p_laptops: filasLaptops({ ...d, modeloId }, 'placeholder'),
+      p_idempotency_key: idempotencyKey ?? null,
+    });
     if (eLote) throw new Error(eLote.message);
-
-    const { error: eLap } = await this.sb.from('laptops').insert(filasLaptops({ ...d, modeloId }, lote.id));
-    if (eLap) throw new Error(eLap.message);
-
-    const { error: eLineas } = await this.sb.from('costo_lineas').insert(lineasDeCompra(d, lote.id, ahora));
-    if (eLineas) throw new Error(eLineas.message);
+    const nuevoLoteId = loteId as string;
 
     // El reparto FIJO se congela al completar la revisión física (congelar_reparto_lote, §2.6)
     await this.sb.from('listings').upsert(
-      { ...listingAFila({ ...d.listing, estado: 'comprado' }), lote_id: lote.id },
+      { ...listingAFila({ ...d.listing, estado: 'comprado' }), lote_id: nuevoLoteId },
       { onConflict: 'user_id,ebay_item_id' },
     );
-    return { loteId: lote.id };
+    return { loteId: nuevoLoteId };
   }
 
   async publicarAvisos(
@@ -315,20 +316,17 @@ export class ProveedorSupabase implements Proveedor {
 
   async registrarConversion(d: ConversionDatos): Promise<{ tasaImplicita: number }> {
     const fecha = d.fecha ?? new Date().toISOString().slice(0, 10);
-    const { data: movs, error: eMov } = await this.sb.from('movimientos').insert([
-      { cuenta_id: d.cuentaOrigenId, fecha, tipo: 'egreso', monto: d.montoOrigen, concepto: d.nota ?? 'Conversión' },
-      { cuenta_id: d.cuentaDestinoId, fecha, tipo: 'ingreso', monto: d.montoDestino, concepto: d.nota ?? 'Conversión' },
-    ]).select('id');
-    if (eMov) throw new Error(eMov.message);
-    const { error: eConv } = await this.sb.from('conversiones').insert({
-      fecha,
-      movimiento_origen_id: movs![0].id,
-      movimiento_destino_id: movs![1].id,
-      monto_origen: d.montoOrigen,
-      monto_destino: d.montoDestino,
-      nota: d.nota ?? null,
+    // Atómico vía el mismo RPC que la web (0016 + 0033): antes eran 3 inserts sueltos que, si el
+    // service worker moría a mitad, dejaban movimientos huérfanos sin la fila de conversión.
+    const { error } = await this.sb.rpc('registrar_conversion', {
+      p_cuenta_origen: d.cuentaOrigenId,
+      p_cuenta_destino: d.cuentaDestinoId,
+      p_monto_origen: d.montoOrigen,
+      p_monto_destino: d.montoDestino,
+      p_fecha: fecha,
+      p_nota: d.nota ?? null,
     });
-    if (eConv) throw new Error(eConv.message);
+    if (error) throw new Error(error.message);
     return { tasaImplicita: d.montoOrigen / d.montoDestino };
   }
 }
