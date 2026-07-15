@@ -66,7 +66,24 @@ jobs:
         run: npm run test -w @tecnofal/core && npm run test -w @tecnofal/provider-local
 
       - uses: supabase/setup-cli@v1
-        with: { version: latest }
+        with: { version: 2.109.1 }
+
+      # El costo de `supabase start` es casi todo pull de imágenes Docker (la de
+      # supabase/postgres sola pesa ~340 MB) — el runner no las persiste entre
+      # corridas, así que las baja enteras cada vez. Las cacheamos con save/load:
+      # en cache-hit `supabase start` no re-baja nada y colapsa a boot+migraciones.
+      # La key va atada a la versión FIJA del CLI de arriba (los tags de imagen los
+      # fija esa versión); al subir el pin, cambia la key y se hace un pull limpio.
+      - name: Restaurar caché de imágenes Docker de Supabase
+        id: cache-imgs
+        uses: actions/cache@v4
+        with:
+          path: ~/supabase-images.tar
+          key: supabase-imgs-2.109.1
+
+      - name: Cargar imágenes cacheadas
+        if: steps.cache-imgs.outputs.cache-hit == 'true'
+        run: docker load -i ~/supabase-images.tar
 
       # 0025_ram_ssd_soldada_deduccion.sql es una migración NO autorizada, de
       # origen incierto, que el usuario decidió explícitamente dejar sin aplicar
@@ -89,8 +106,18 @@ jobs:
       - name: Levantar Supabase local (solo db + auth + rest + realtime)
         run: |
           inicio=$(date +%s)
-          npx supabase start -x studio,edge-runtime,imgproxy,storage-api,logflare,vector,supavisor,postgres-meta,mailpit
+          npx supabase@2.109.1 start -x studio,edge-runtime,imgproxy,storage-api,logflare,vector,supavisor,postgres-meta,mailpit
           echo "⏱️ supabase start tardó $(( $(date +%s) - inicio ))s"
+
+      # Solo la primera vez (cache-miss): guardamos las imágenes que el start dejó
+      # bajadas para que actions/cache las suba. Filtramos a las de supabase/kong/
+      # postgrest para no arrastrar las imágenes preinstaladas del runner.
+      - name: Guardar imágenes de Supabase en caché
+        if: steps.cache-imgs.outputs.cache-hit != 'true'
+        run: |
+          imgs=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep -Ei 'supabase|postgrest|kong' | grep -v '<none>')
+          echo "$imgs"
+          docker save -o ~/supabase-images.tar $imgs
 
       - name: Configurar apps/web/.env.local
         run: cp apps/web/.env.local.example apps/web/.env.local
