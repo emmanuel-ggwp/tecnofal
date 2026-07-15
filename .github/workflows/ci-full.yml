@@ -78,8 +78,19 @@ jobs:
           mkdir -p /tmp/excluded-migrations
           mv supabase/migrations/0025_ram_ssd_soldada_deduccion.sql /tmp/excluded-migrations/ 2>/dev/null || true
 
-      - name: Levantar Supabase local
-        run: npx supabase start
+      # Solo levantamos los servicios que la suite e2e realmente usa: db (Postgres),
+      # auth (GoTrue: createUser/listUsers/login) y rest (PostgREST: supabase-js).
+      # realtime se deja por la dependencia de WebSocket de supabase-js (ver CLAUDE.md).
+      # Excluimos el resto (studio, edge-runtime, imgproxy, storage-api, logflare,
+      # vector, supavisor, postgres-meta, mailpit) — ninguna spec los toca: no hay
+      # subida de fotos/Storage en e2e y asegurarBucketFotos/subirFoto solo corren en
+      # handlers de acción del usuario, no en render. Menos contenedores que bajar y
+      # bootear ⇒ menos tiempo de arranque, sin perder el aislamiento por corrida.
+      - name: Levantar Supabase local (solo db + auth + rest + realtime)
+        run: |
+          inicio=$(date +%s)
+          npx supabase start -x studio,edge-runtime,imgproxy,storage-api,logflare,vector,supavisor,postgres-meta,mailpit
+          echo "⏱️ supabase start tardó $(( $(date +%s) - inicio ))s"
 
       - name: Configurar apps/web/.env.local
         run: cp apps/web/.env.local.example apps/web/.env.local
