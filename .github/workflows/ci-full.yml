@@ -22,6 +22,11 @@ concurrency:
 jobs:
   full-suite:
     runs-on: ubuntu-latest
+    env:
+      # ÚNICA fuente de la versión del CLI de Supabase. Cambiar SOLO aquí:
+      # el setup-cli, la key de la caché de imágenes y el `npx supabase@…` de
+      # abajo la derivan de esta var, así no se pueden desincronizar al bumpear.
+      SUPABASE_CLI_VERSION: "2.109.1"
     steps:
       - uses: actions/checkout@v4
 
@@ -66,7 +71,7 @@ jobs:
         run: npm run test -w @tecnofal/core && npm run test -w @tecnofal/provider-local
 
       - uses: supabase/setup-cli@v1
-        with: { version: 2.109.1 }
+        with: { version: "${{ env.SUPABASE_CLI_VERSION }}" }
 
       # El costo de `supabase start` es casi todo pull de imágenes Docker (la de
       # supabase/postgres sola pesa ~340 MB) — el runner no las persiste entre
@@ -79,7 +84,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/supabase-images.tar
-          key: supabase-imgs-2.109.1
+          key: supabase-imgs-${{ env.SUPABASE_CLI_VERSION }}
 
       - name: Cargar imágenes cacheadas
         if: steps.cache-imgs.outputs.cache-hit == 'true'
@@ -106,7 +111,7 @@ jobs:
       - name: Levantar Supabase local (solo db + auth + rest + realtime)
         run: |
           inicio=$(date +%s)
-          npx supabase@2.109.1 start -x studio,edge-runtime,imgproxy,storage-api,logflare,vector,supavisor,postgres-meta,mailpit
+          npx supabase@${SUPABASE_CLI_VERSION} start -x studio,edge-runtime,imgproxy,storage-api,logflare,vector,supavisor,postgres-meta,mailpit
           echo "⏱️ supabase start tardó $(( $(date +%s) - inicio ))s"
 
       # Solo la primera vez (cache-miss): guardamos las imágenes que el start dejó
