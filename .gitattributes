@@ -1,0 +1,4 @@
+# Los scripts de shell y los hooks DEBEN checkoutearse con LF incluso en Windows
+# (core.autocrlf=true los convertiría a CRLF y bash falla con "bad interpreter").
+*.sh text eol=lf
+.githooks/* text eol=lf

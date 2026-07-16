@@ -57,4 +57,15 @@ fi
 echo "▶ [5/5] e2e web (Playwright, suite completa --workers=1)"
 ( cd apps/web && bunx playwright test --workers=1 ) || fallo "e2e web"
 
+# Limpieza NO bloqueante: barre las bases de trabajo agente_* que algún agente haya dejado sin
+# --drop (solo cuestan disco; clonar de `plantilla` es instantáneo). Nunca aborta el push: si el
+# barrido falla —o falta bash— solo avisa. El e2e ya corrió contra `postgres`, no contra agente_*,
+# así que barrer aquí es seguro. `plantilla` se preserva (no empieza por 'agente_').
+echo "▶ limpieza: barriendo bases de trabajo agente_* (no bloquea el push)"
+if command -v bash >/dev/null 2>&1; then
+  bash scripts/db-agente.sh --drop-all || echo "  (aviso) el barrido de agente_* falló; continúo sin abortar el push." >&2
+else
+  echo "  (aviso) bash no está en el PATH; omito el barrido de agente_*." >&2
+fi
+
 echo "✓ pre-push: todos los tests pasaron — push permitido."
