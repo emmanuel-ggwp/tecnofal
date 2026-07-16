@@ -13,7 +13,7 @@ name: CI Full
 #
 # Orquestación: los pasos de un job de Actions son estrictamente secuenciales,
 # pero los procesos lanzados con `&` sobreviven entre pasos. `supabase start`
-# es el tramo más largo del job (~130 s en cache-miss) y es casi todo red/IO
+# es el tramo más largo del job (~150 s) y es casi todo red/IO
 # (pull de imágenes + boot de contenedores), así que se lanza EN SEGUNDO PLANO
 # apenas termina el checkout: typecheck/build/unit corren mientras tanto sobre
 # la CPU ociosa y "Esperar a Supabase" recoge su exit code y su log justo
@@ -31,9 +31,9 @@ jobs:
   full-suite:
     runs-on: ubuntu-latest
     env:
-      # ÚNICA fuente de la versión del CLI de Supabase. Cambiar SOLO aquí:
-      # el setup-cli, la key de la caché de imágenes y el `npx supabase@…` de
-      # abajo la derivan de esta var, así no se pueden desincronizar al bumpear.
+      # ÚNICA fuente de la versión del CLI de Supabase. Cambiar SOLO aquí: el
+      # setup-cli y el `npx supabase@…` de abajo la derivan de esta var, así no
+      # se pueden desincronizar al bumpear.
       SUPABASE_CLI_VERSION: "2.109.1"
     steps:
       - uses: actions/checkout@v4
@@ -42,19 +42,12 @@ jobs:
       - uses: supabase/setup-cli@v1
         with: { version: "${{ env.SUPABASE_CLI_VERSION }}" }
 
-      # El costo de `supabase start` es casi todo pull de imágenes Docker (la de
-      # supabase/postgres sola pesa ~340 MB) — el runner no las persiste entre
-      # corridas, así que las baja enteras cada vez. Las cacheamos con save/load:
-      # en cache-hit el bloque en segundo plano de abajo hace `docker load` antes
-      # del start y este no re-baja nada, colapsando a boot+migraciones.
-      # La key va atada a la versión FIJA del CLI de arriba (los tags de imagen los
-      # fija esa versión); al subir el pin, cambia la key y se hace un pull limpio.
-      - name: Restaurar caché de imágenes Docker de Supabase
-        id: cache-imgs
-        uses: actions/cache@v4
-        with:
-          path: ~/supabase-images.tar
-          key: supabase-imgs-${{ env.SUPABASE_CLI_VERSION }}
+      # SIN caché de imágenes Docker, a propósito (medido 2026-07-16, corridas
+      # 29468097256 vs 29468443842 de este workflow): en la red del runner el pull
+      # paralelo del start cuesta lo mismo que el `docker load` del tar cacheado
+      # (start en segundo plano: 151 s sin caché vs 159 s con hit), así que cachear
+      # solo sumaba costos fijos — 16 s de restore en hit y 32 s de save + subida
+      # en miss. Si el start volviera a correr en serie (sin solape), reevaluar.
 
       # 0025_ram_ssd_soldada_deduccion.sql es una migración NO autorizada, de
       # origen incierto, que el usuario decidió explícitamente dejar sin aplicar
@@ -78,18 +71,14 @@ jobs:
       #
       # El subshell escribe /tmp/supabase-start.exit al FINAL (es el centinela que
       # espera "Esperar a Supabase"); `|| rc=$?` evita que el -e del shell mate el
-      # subshell antes de escribirlo. Si el docker load fallara, el start re-baja
-      # las imágenes él mismo (más lento pero correcto).
+      # subshell antes de escribirlo.
       - name: Levantar Supabase local en segundo plano (solo db + auth + rest + realtime)
         run: |
           (
             rc=0
             inicio=$(date +%s)
-            if [ -f "$HOME/supabase-images.tar" ]; then
-              docker load -i "$HOME/supabase-images.tar" || echo "(aviso) docker load falló; supabase start bajará las imágenes"
-            fi
             npx supabase@${SUPABASE_CLI_VERSION} start -x studio,edge-runtime,imgproxy,storage-api,logflare,vector,supavisor,postgres-meta,mailpit || rc=$?
-            echo "⏱️ (docker load +) supabase start tardó $(( $(date +%s) - inicio ))s en segundo plano"
+            echo "⏱️ supabase start tardó $(( $(date +%s) - inicio ))s en segundo plano"
             echo "$rc" > /tmp/supabase-start.exit
           ) > /tmp/supabase-start.log 2>&1 &
           echo "Supabase arrancando en segundo plano (PID $!); log en /tmp/supabase-start.log"
@@ -153,17 +142,6 @@ jobs:
           echo "⏱️ espera adicional tras los checks: $(( $(date +%s) - espera ))s"
           cat /tmp/supabase-start.log
           exit "$(cat /tmp/supabase-start.exit)"
-
-      # Solo la primera vez (cache-miss): guardamos las imágenes que el start dejó
-      # bajadas para que actions/cache las suba. Filtramos a las de supabase/kong/
-      # postgrest para no arrastrar las imágenes preinstaladas del runner. Va tras
-      # "Esperar a Supabase": para entonces el pull ya terminó.
-      - name: Guardar imágenes de Supabase en caché
-        if: steps.cache-imgs.outputs.cache-hit != 'true'
-        run: |
-          imgs=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep -Ei 'supabase|postgrest|kong' | grep -v '<none>')
-          echo "$imgs"
-          docker save -o ~/supabase-images.tar $imgs
 
       - name: Configurar apps/web/.env.local
         run: cp apps/web/.env.local.example apps/web/.env.local
