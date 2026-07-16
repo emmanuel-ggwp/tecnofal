@@ -10,6 +10,14 @@ name: CI Full
 # bien extensiones cargadas (necesitaría --headless=new o xvfb). Es un
 # problema preexistente sin relación con el panel web; queda pendiente como
 # mejora aparte, sin bloquear el deploy.
+#
+# Orquestación: los pasos de un job de Actions son estrictamente secuenciales,
+# pero los procesos lanzados con `&` sobreviven entre pasos. `supabase start`
+# es el tramo más largo del job (~130 s en cache-miss) y es casi todo red/IO
+# (pull de imágenes + boot de contenedores), así que se lanza EN SEGUNDO PLANO
+# apenas termina el checkout: typecheck/build/unit corren mientras tanto sobre
+# la CPU ociosa y "Esperar a Supabase" recoge su exit code y su log justo
+# antes del e2e, que es el único paso que lo necesita.
 on:
   pull_request:
     branches: [main]
@@ -30,6 +38,63 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # ───── Supabase primero, en segundo plano (ver "Orquestación" arriba) ─────
+      - uses: supabase/setup-cli@v1
+        with: { version: "${{ env.SUPABASE_CLI_VERSION }}" }
+
+      # El costo de `supabase start` es casi todo pull de imágenes Docker (la de
+      # supabase/postgres sola pesa ~340 MB) — el runner no las persiste entre
+      # corridas, así que las baja enteras cada vez. Las cacheamos con save/load:
+      # en cache-hit el bloque en segundo plano de abajo hace `docker load` antes
+      # del start y este no re-baja nada, colapsando a boot+migraciones.
+      # La key va atada a la versión FIJA del CLI de arriba (los tags de imagen los
+      # fija esa versión); al subir el pin, cambia la key y se hace un pull limpio.
+      - name: Restaurar caché de imágenes Docker de Supabase
+        id: cache-imgs
+        uses: actions/cache@v4
+        with:
+          path: ~/supabase-images.tar
+          key: supabase-imgs-${{ env.SUPABASE_CLI_VERSION }}
+
+      # 0025_ram_ssd_soldada_deduccion.sql es una migración NO autorizada, de
+      # origen incierto, que el usuario decidió explícitamente dejar sin aplicar
+      # en producción (2026-07-11) — se excluye también aquí para que el schema
+      # de CI coincida con el real. El archivo NO se toca en el repo, solo se
+      # mueve fuera de supabase/migrations/ en este runner efímero. Debe ir
+      # ANTES de lanzar el start: el start aplica las migraciones.
+      - name: Excluir migración no autorizada 0025 (solo en este runner)
+        run: |
+          mkdir -p /tmp/excluded-migrations
+          mv supabase/migrations/0025_ram_ssd_soldada_deduccion.sql /tmp/excluded-migrations/ 2>/dev/null || true
+
+      # Solo levantamos los servicios que la suite e2e realmente usa: db (Postgres),
+      # auth (GoTrue: createUser/listUsers/login) y rest (PostgREST: supabase-js).
+      # realtime se deja por la dependencia de WebSocket de supabase-js (ver CLAUDE.md).
+      # Excluimos el resto (studio, edge-runtime, imgproxy, storage-api, logflare,
+      # vector, supavisor, postgres-meta, mailpit) — ninguna spec los toca: no hay
+      # subida de fotos/Storage en e2e y asegurarBucketFotos/subirFoto solo corren en
+      # handlers de acción del usuario, no en render. Menos contenedores que bajar y
+      # bootear ⇒ menos tiempo de arranque, sin perder el aislamiento por corrida.
+      #
+      # El subshell escribe /tmp/supabase-start.exit al FINAL (es el centinela que
+      # espera "Esperar a Supabase"); `|| rc=$?` evita que el -e del shell mate el
+      # subshell antes de escribirlo. Si el docker load fallara, el start re-baja
+      # las imágenes él mismo (más lento pero correcto).
+      - name: Levantar Supabase local en segundo plano (solo db + auth + rest + realtime)
+        run: |
+          (
+            rc=0
+            inicio=$(date +%s)
+            if [ -f "$HOME/supabase-images.tar" ]; then
+              docker load -i "$HOME/supabase-images.tar" || echo "(aviso) docker load falló; supabase start bajará las imágenes"
+            fi
+            npx supabase@${SUPABASE_CLI_VERSION} start -x studio,edge-runtime,imgproxy,storage-api,logflare,vector,supavisor,postgres-meta,mailpit || rc=$?
+            echo "⏱️ (docker load +) supabase start tardó $(( $(date +%s) - inicio ))s en segundo plano"
+            echo "$rc" > /tmp/supabase-start.exit
+          ) > /tmp/supabase-start.log 2>&1 &
+          echo "Supabase arrancando en segundo plano (PID $!); log en /tmp/supabase-start.log"
+
+      # ───── Mientras Supabase arranca: toolchain, checks y tests unitarios ─────
       - uses: oven-sh/setup-bun@v2
         with: { bun-version: latest }
       - uses: actions/setup-node@v4
@@ -70,53 +135,29 @@ jobs:
       - name: Tests unitarios (core + provider-local)
         run: npm run test -w @tecnofal/core && npm run test -w @tecnofal/provider-local
 
-      - uses: supabase/setup-cli@v1
-        with: { version: "${{ env.SUPABASE_CLI_VERSION }}" }
-
-      # El costo de `supabase start` es casi todo pull de imágenes Docker (la de
-      # supabase/postgres sola pesa ~340 MB) — el runner no las persiste entre
-      # corridas, así que las baja enteras cada vez. Las cacheamos con save/load:
-      # en cache-hit `supabase start` no re-baja nada y colapsa a boot+migraciones.
-      # La key va atada a la versión FIJA del CLI de arriba (los tags de imagen los
-      # fija esa versión); al subir el pin, cambia la key y se hace un pull limpio.
-      - name: Restaurar caché de imágenes Docker de Supabase
-        id: cache-imgs
-        uses: actions/cache@v4
-        with:
-          path: ~/supabase-images.tar
-          key: supabase-imgs-${{ env.SUPABASE_CLI_VERSION }}
-
-      - name: Cargar imágenes cacheadas
-        if: steps.cache-imgs.outputs.cache-hit == 'true'
-        run: docker load -i ~/supabase-images.tar
-
-      # 0025_ram_ssd_soldada_deduccion.sql es una migración NO autorizada, de
-      # origen incierto, que el usuario decidió explícitamente dejar sin aplicar
-      # en producción (2026-07-11) — se excluye también aquí para que el schema
-      # de CI coincida con el real. El archivo NO se toca en el repo, solo se
-      # mueve fuera de supabase/migrations/ en este runner efímero.
-      - name: Excluir migración no autorizada 0025 (solo en este runner)
+      # ───── Punto de encuentro: el e2e sí necesita Supabase arriba ─────
+      # La "espera adicional" que imprime es lo ÚNICO que el start le sigue
+      # costando al job en la práctica; el resto quedó solapado con los checks.
+      # Cota de 10 min por si el start se cuelga: mejor fallar que colgar el job.
+      - name: Esperar a Supabase (arrancado en segundo plano tras el checkout)
         run: |
-          mkdir -p /tmp/excluded-migrations
-          mv supabase/migrations/0025_ram_ssd_soldada_deduccion.sql /tmp/excluded-migrations/ 2>/dev/null || true
-
-      # Solo levantamos los servicios que la suite e2e realmente usa: db (Postgres),
-      # auth (GoTrue: createUser/listUsers/login) y rest (PostgREST: supabase-js).
-      # realtime se deja por la dependencia de WebSocket de supabase-js (ver CLAUDE.md).
-      # Excluimos el resto (studio, edge-runtime, imgproxy, storage-api, logflare,
-      # vector, supavisor, postgres-meta, mailpit) — ninguna spec los toca: no hay
-      # subida de fotos/Storage en e2e y asegurarBucketFotos/subirFoto solo corren en
-      # handlers de acción del usuario, no en render. Menos contenedores que bajar y
-      # bootear ⇒ menos tiempo de arranque, sin perder el aislamiento por corrida.
-      - name: Levantar Supabase local (solo db + auth + rest + realtime)
-        run: |
-          inicio=$(date +%s)
-          npx supabase@${SUPABASE_CLI_VERSION} start -x studio,edge-runtime,imgproxy,storage-api,logflare,vector,supavisor,postgres-meta,mailpit
-          echo "⏱️ supabase start tardó $(( $(date +%s) - inicio ))s"
+          espera=$(date +%s)
+          while [ ! -f /tmp/supabase-start.exit ]; do
+            if [ $(( $(date +%s) - espera )) -gt 600 ]; then
+              echo "::error::supabase start no terminó en 10 min; log parcial:"
+              cat /tmp/supabase-start.log || true
+              exit 1
+            fi
+            sleep 2
+          done
+          echo "⏱️ espera adicional tras los checks: $(( $(date +%s) - espera ))s"
+          cat /tmp/supabase-start.log
+          exit "$(cat /tmp/supabase-start.exit)"
 
       # Solo la primera vez (cache-miss): guardamos las imágenes que el start dejó
       # bajadas para que actions/cache las suba. Filtramos a las de supabase/kong/
-      # postgrest para no arrastrar las imágenes preinstaladas del runner.
+      # postgrest para no arrastrar las imágenes preinstaladas del runner. Va tras
+      # "Esperar a Supabase": para entonces el pull ya terminó.
       - name: Guardar imágenes de Supabase en caché
         if: steps.cache-imgs.outputs.cache-hit != 'true'
         run: |
