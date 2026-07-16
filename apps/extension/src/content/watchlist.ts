@@ -18,6 +18,8 @@ interface Item extends ItemOverlay {
   precio: number | null;
   envio: number;
   itemId: string | null;
+  /** texto crudo del countdown de la tarjeta ("2h 46m", "39m 10s") — null si no es subasta o no se capturó */
+  tiempoRestanteTexto: string | null;
   vendedor: string | null;
   vendedorPctPositivo: number | null;
   vendedorTotalVentas: number | null;
@@ -75,7 +77,8 @@ function extraerItem(el: Element): Item | null {
     .join(' · ');
   const { vendedor, vendedorPctPositivo, vendedorTotalVentas, filaEl } = vendedorDeFila(el);
   const cantidadOfertas = cantidadOfertasDeFila(el);
-  return { el, tituloEl, titulo, subtitulo, precio, envio, itemId, vendedor, vendedorPctPositivo, vendedorTotalVentas, vendedorFilaEl: filaEl, cantidadOfertas };
+  const tiempoRestanteTexto = tiempoRestanteDeFila(el);
+  return { el, tituloEl, titulo, subtitulo, precio, envio, itemId, tiempoRestanteTexto, vendedor, vendedorPctPositivo, vendedorTotalVentas, vendedorFilaEl: filaEl, cantidadOfertas };
 }
 
 // evita reenviar el mismo vendedor en cada re-render/scroll dentro de esta sesión de la pestaña
@@ -147,6 +150,18 @@ async function flushCola() {
         const visto = vistos.get(id);
         if (!visto) continue;
         for (const item of items) evaluarYPintar(item, catalogoGlobal, new Map([[id, visto]]));
+        // Corrige fechaFinSubasta acá, en el MISMO camino que repinta el badge: cuando eBay
+        // re-renderiza una tarjeta borra el badge, el MutationObserver la vuelve a observar y
+        // dispara este flush — así el tiempo se re-verifica a la par del badge, sin depender de
+        // que el intervalo de 5 min alcance a correr con tarjetas presentes (mismo criterio que
+        // search.ts). El primer item con countdown basta: todos comparten itemId/tiempo.
+        const conTiempo = items.find((it) => it.tiempoRestanteTexto != null);
+        if (conTiempo) {
+          const fechaFinSubasta = parsearFechaFinWatchlist(conTiempo.tiempoRestanteTexto);
+          if (tiempoDiverge(fechaFinSubasta, visto.fechaFinSubasta)) {
+            void enviar({ tipo: 'listings:actualizarTiempo', ebayItemId: id, fechaFinSubasta }).catch(() => {});
+          }
+        }
       }
     }
   } catch { /* modo degradado sin ✓/confirmación */ }
@@ -154,12 +169,12 @@ async function flushCola() {
 
 const INTERVALO_ACTUALIZAR_TIEMPOS_MS = 5 * 60_000;
 
-/** Corrige fechaFinSubasta de los listings YA guardados que están visibles ahora mismo en la
- *  Watchlist, comparando contra el countdown recién scrapeado — independiente del pintado de
- *  badges (encolarCheck/flushCola), que solo corre cuando una tarjeta pasa por el
- *  IntersectionObserver por primera vez. La Watchlist se suele dejar abierta en una pestaña por
- *  horas, así que esto se re-corre cada 5 min (además de una vez al cargar) para que el tiempo
- *  restante no se quede desactualizado mientras la pestaña sigue abierta. */
+/** RESPALDO del intervalo (5 min): la corrección de tiempo principal ya ocurre en flushCola, a la
+ *  par del pintado de badges, así que cubre cada re-render de eBay. Esto es la red para el caso
+ *  contrario: una pestaña dejada abierta por horas donde eBay NO re-renderiza (las tarjetas no
+ *  vuelven a intersectar → flushCola no se dispara), de modo que el tiempo restante no se quede
+ *  desactualizado. Corrige los listings YA guardados visibles ahora, comparando contra el
+ *  countdown recién scrapeado. */
 async function actualizarTiempos() {
   const tiempoPorId = new Map<string, string>();
   for (const el of document.querySelectorAll('div.m-item-3-col')) {
@@ -182,6 +197,58 @@ async function actualizarTiempos() {
   } catch { /* modo degradado — se reintenta en el próximo intervalo */ }
 }
 
+// ---- Countdown en vivo sobre las tarjetas de eBay ----
+// El "16m 51s" que muestra la Watchlist es texto renderizado UNA vez por eBay: no tickea solo.
+// Acá anclamos la fecha de fin la primera vez que vemos cada tarjeta (parseando ese texto) y
+// reescribimos el numero cada segundo, para que baje en vivo ("16m 51s" -> "11m 50s" a los 5 min).
+// Esto es puramente visual sobre eBay - independiente de la correccion de fechaFinSubasta en la
+// base (flushCola/actualizarTiempos), que alimenta el panel web.
+const finPorId = new Map<string, Date>();
+
+/** Ancla la fecha de fin de un item la PRIMERA vez que lo vemos (no re-ancla: el texto de eBay
+ *  esta congelado, re-anclar reiniciaria el countdown a su valor original). */
+function anclarFin(item: Item) {
+  if (!item.itemId || finPorId.has(item.itemId) || item.tiempoRestanteTexto == null) return;
+  const fin = parsearFechaFinWatchlist(item.tiempoRestanteTexto);
+  if (fin) finPorId.set(item.itemId, fin);
+}
+
+/** Formatea ms restantes al estilo de la Watchlist: las dos unidades mayores no-cero
+ *  ("2d 3h", "1h 36m", "11m 50s"). Devuelve null si ya finalizo. */
+function formatearCountdownVivo(ms: number): string | null {
+  if (ms <= 0) return null;
+  const s = Math.floor(ms / 1000);
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const seg = s % 60;
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m ${seg}s`;
+}
+
+/** Reescribe el texto del countdown de cada tarjeta visible con el tiempo restante actual.
+ *  Consulta el DOM en cada tick (no cachea elementos) para sobrevivir a los re-render de eBay:
+ *  si eBay recrea la tarjeta, el siguiente tick reescribe el elemento nuevo. Toca solo la hoja de
+ *  texto (drill al firstElementChild) para preservar el estilo/estructura de eBay. */
+function tickCountdowns() {
+  if (finPorId.size === 0) return;
+  const ahora = Date.now();
+  for (const el of document.querySelectorAll('div.m-item-3-col')) {
+    const itemId = el.querySelector<HTMLInputElement>('input.checkbox__control')?.getAttribute('data-itemid');
+    if (!itemId) continue;
+    const fin = finPorId.get(itemId);
+    if (!fin) continue;
+    const timeEl = el.querySelector('[data-testid="time-left"]');
+    if (!timeEl) continue;
+    let hoja: Element = timeEl;
+    while (hoja.firstElementChild) hoja = hoja.firstElementChild;
+    const texto = formatearCountdownVivo(fin.getTime() - ahora);
+    if (texto == null) { finPorId.delete(itemId); continue; } // finalizada: dejar de tickear
+    if (hoja.textContent !== texto) hoja.textContent = texto;
+  }
+}
+
 let io: IntersectionObserver | null = null;
 
 /** SOLO se fija en si el badge sigue en el DOM ahora mismo — la Watchlist tiene countdowns que
@@ -202,6 +269,7 @@ function onIntersect(entries: IntersectionObserverEntry[]) {
     io?.unobserve(entry.target);
     const item = extraerItem(entry.target);
     if (!item) continue;
+    anclarFin(item);
     evaluarYPintar(item, catalogoGlobal, new Map());
     encolarCheck(item);
   }
@@ -231,6 +299,10 @@ async function main() {
 
   void actualizarTiempos();
   window.setInterval(() => void actualizarTiempos(), INTERVALO_ACTUALIZAR_TIEMPOS_MS);
+
+  // Countdown visible en vivo: reescribe el "16m 51s" de cada tarjeta cada minuto para que baje
+  // solo (eBay lo deja congelado). Anclado en onIntersect a medida que las tarjetas aparecen.
+  window.setInterval(tickCountdowns, 60_000);
 }
 
 void main();
