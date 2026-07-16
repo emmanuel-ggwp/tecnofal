@@ -103,6 +103,30 @@ planes/                     → planes de ejecución por dominio + bitácoras (v
 - `ci-full.yml` (PR a main, check requerido): además build + suite Playwright completa de `apps/web` (`--workers=1`) contra un Supabase real en el runner. **Excluye a propósito** el e2e de la extensión (falla en Chromium headless del runner con extensiones cargadas — pendiente aparte, decisión del usuario) y la migración 0025.
 - CI usa Node 22: `@supabase/supabase-js` (realtime) necesita WebSocket nativo que Node 20 no trae.
 
+## Commits y push (para agentes)
+
+- **Autoría:** los commits deben ir autorados por la identidad del proyecto —
+  `user.name=emmanuelmarcano`, `user.email=emmanuel.marcano.gg@gmail.com` (el @gmail; es lo que
+  GitHub y Vercel usan para atribuir el commit y el deploy). Verifícalo con `git config user.email`
+  en cada worktree nuevo antes de commitear. Cierra los mensajes con el trailer
+  `Co-Authored-By: Claude ...`. NO se firman con GPG (no está configurado; no lo actives).
+- **Push SOLO desde la terminal** con el entorno de dev cargado (bun/docker/node en el PATH).
+  NO desde GitHub Desktop u otro cliente GUI: corren los hooks con un PATH mínimo y el `pre-push`
+  aborta con "command not found" (o, peor, subiría sin tests). Y hazlo desde un worktree que
+  contenga `.githooks/pre-push`: si el checkout no trae el hook, git lo omite y subirías SIN correr
+  la suite.
+- **Requisito del push:** Supabase local arriba (el hook corre el e2e web). El `pre-push` corre
+  typecheck + lint + unit + e2e y **aborta si algo falla** (ver "CI y flujo de trabajo"). ~5 min.
+- **Transporte SSH multi-cuenta:** `origin` usa un alias de host, no `github.com` pelado:
+  `git@github-ggwp:emmanuel-ggwp/tecnofal.git`. El push viaja por la clave SSH de la cuenta
+  `emmanuel-ggwp` (dueña del repo), mientras la **autoría** sigue siendo el @gmail — que el
+  auth-account (ggwp) sea distinto del author-email (marcano) es intencional y correcto. Los alias
+  viven en `~/.ssh/config` (por máquina, NO versionado): `Host github-ggwp` →
+  `IdentityFile ~/.ssh/id_ed25519_ggwp`, `IdentitiesOnly yes`.
+- **Flujo típico:** `git config core.hooksPath .githooks` (una vez por clon) → commit con la
+  identidad correcta → `git push` desde el worktree en la terminal → el hook corre la suite → sube
+  por SSH.
+
 ## Sistema de planes (`planes/`)
 
 El trabajo grande se ejecuta con planes autocontenidos por dominio (ver `planes/README.md`, que también fija las convenciones de código de la web). Regla clave al ejecutar un plan: **si algo no cuadra** (esquema ≠ plan, regla contradictoria, columna/vista/RPC faltante), no lo arregles en silencio — anótalo en la sección "Bitácora" del plan con qué esperabas, qué encontraste y qué decidiste hacer mientras tanto.
